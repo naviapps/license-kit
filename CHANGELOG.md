@@ -4,7 +4,7 @@ All notable changes to LicenseKit will be documented in this file.
 
 This project follows semantic versioning.
 
-## [0.1.0] - 2026-05-13
+## [0.1.0] - 2026-05-14
 
 ### Added
 
