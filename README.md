@@ -5,9 +5,10 @@
 [![Swift versions](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fnaviapps%2Flicense-kit%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/naviapps/license-kit)
 [![Supported platforms](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fnaviapps%2Flicense-kit%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/naviapps/license-kit)
 
-LicenseKit is a small Swift package for managing application license state on macOS.
-It provides the state model, persistence protocols, refresh policy, and provider-facing
-interfaces needed to connect a licensing backend to an app.
+LicenseKit provides license state management for macOS apps.
+It helps apps manage activation state, validation refreshes, offline grace
+periods, and persistence without coupling app code to a specific billing or
+licensing provider.
 
 ## Requirements
 
@@ -98,8 +99,8 @@ if manager.needsRefresh() {
 Mutating operations return the updated `LicenseState`. `refresh()` returns
 `LicenseRefreshResult`, so callers can distinguish a successful validation,
 grace-period fallback, invalidation, expiration, disabled refresh, skipped
-refresh, and offering load failure. Validation failures are exposed through `validationFailure`;
-dynamic offering failures are exposed through `offeringLoadFailure`.
+refresh. Validation failures are exposed through `validationFailure`; dynamic
+offering failures are exposed through `offeringLoadFailure`.
 Concurrent activation and refresh operations are guarded so stale operation
 results cannot overwrite newer local state.
 Public state is exposed through `state` and convenience properties such as
@@ -113,6 +114,33 @@ needs to open a billing or subscription portal.
 Use `LicenseActivation.source` only when the app needs to distinguish which
 provider supplied the active activation. LicenseKit keeps one active activation
 at a time.
+
+## State lifecycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> unlicensed
+  unlicensed --> activating: activate
+  active --> activating: activate new key
+  gracePeriod --> activating: activate new key
+  invalid --> activating: activate again
+  expired --> activating: activate again
+  deactivated --> activating: activate again
+  activating --> active: activation accepted
+  activating --> unlicensed: activation failed without previous activation
+  active --> active: refresh valid
+  active --> gracePeriod: refresh failed
+  gracePeriod --> active: refresh valid
+  gracePeriod --> invalid: refresh still failing after grace expires
+  active --> invalid: validation rejected
+  active --> expired: validation expired
+  active --> deactivated: deactivate
+  gracePeriod --> deactivated: deactivate
+
+  note right of activating
+    Failed activation restores the previous state when one exists.
+  end note
+```
 
 ## Provider contract
 
