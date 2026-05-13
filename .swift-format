@@ -1,0 +1,22 @@
+{
+  "indentation": {
+    "spaces": 2
+  },
+  "lineLength": 100,
+  "maximumBlankLines": 1,
+  "respectsExistingLineBreaks": true,
+  "rules": {
+    "AlwaysUseLowerCamelCase": true,
+    "DoNotUseSemicolons": true,
+    "IdentifiersMustBeASCII": true,
+    "NeverForceUnwrap": false,
+    "NeverUseForceTry": false,
+    "NeverUseImplicitlyUnwrappedOptionals": false,
+    "NoBlockComments": true,
+    "NoParensAroundConditions": true,
+    "OmitExplicitReturns": false,
+    "OrderedImports": true,
+    "UseTripleSlashForDocumentationComments": true
+  },
+  "version": 1
+}
