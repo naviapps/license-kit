@@ -4,7 +4,7 @@ public struct LicenseOffering: Equatable, Sendable, Codable, Identifiable {
   public let id: String
   public let name: String
   public let kind: LicenseOfferingKind
-  public let billingInterval: LicenseBillingInterval?
+  public let billingPeriod: LicenseBillingPeriod?
   public let priceInMinorUnits: Int?
   public let currencyCode: String?
   public let description: String?
@@ -15,7 +15,7 @@ public struct LicenseOffering: Equatable, Sendable, Codable, Identifiable {
     case id
     case name
     case kind
-    case billingInterval
+    case billingPeriod
     case priceInMinorUnits
     case currencyCode
     case description
@@ -27,7 +27,7 @@ public struct LicenseOffering: Equatable, Sendable, Codable, Identifiable {
     id: String,
     name: String,
     kind: LicenseOfferingKind = .unknown,
-    billingInterval: LicenseBillingInterval? = nil,
+    billingPeriod: LicenseBillingPeriod? = nil,
     priceInMinorUnits: Int? = nil,
     currencyCode: String? = nil,
     description: String? = nil,
@@ -55,7 +55,7 @@ public struct LicenseOffering: Equatable, Sendable, Codable, Identifiable {
     self.id = normalizedID
     self.name = normalizedName
     self.kind = kind
-    self.billingInterval = billingInterval
+    self.billingPeriod = billingPeriod
     self.priceInMinorUnits = priceInMinorUnits
     self.currencyCode = normalizedCurrencyCode
     self.description = description?.licenseKitTrimmedNonEmpty
@@ -115,9 +115,9 @@ public struct LicenseOffering: Equatable, Sendable, Codable, Identifiable {
       id: id,
       name: name,
       kind: try container.decodeIfPresent(LicenseOfferingKind.self, forKey: .kind) ?? .unknown,
-      billingInterval: try container.decodeIfPresent(
-        LicenseBillingInterval.self,
-        forKey: .billingInterval
+      billingPeriod: try container.decodeIfPresent(
+        LicenseBillingPeriod.self,
+        forKey: .billingPeriod
       ),
       priceInMinorUnits: priceInMinorUnits,
       currencyCode: currencyCode,

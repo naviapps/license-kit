@@ -184,7 +184,8 @@ activation and refreshing with your provider is sufficient.
 - ``LicensePlan``
 - ``LicenseOffering``
 - ``LicenseOfferingKind``
-- ``LicenseBillingInterval``
+- ``LicenseBillingPeriod``
+- ``LicenseBillingPeriodUnit``
 - ``LicenseValidationResult``
 
 ### Persistence

@@ -4,6 +4,15 @@ All notable changes to LicenseKit will be documented in this file.
 
 This project follows semantic versioning.
 
+## [1.0.0] - 2026-05-14
+
+### Changed
+
+- Declared the first stable public API release.
+- Replaced `LicenseBillingInterval` with `LicenseBillingPeriod` and
+  `LicenseBillingPeriodUnit` so offerings can represent multi-unit billing
+  periods such as every 3 months.
+
 ## [0.1.0] - 2026-05-14
 
 ### Added

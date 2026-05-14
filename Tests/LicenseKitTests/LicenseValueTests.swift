@@ -259,7 +259,7 @@ final class LicenseValueTests: XCTestCase {
       id: " pro ",
       name: " Pro ",
       kind: .recurring,
-      billingInterval: .year,
+      billingPeriod: .year,
       priceInMinorUnits: 9900,
       currencyCode: " usd ",
       formattedPrice: nil
@@ -280,7 +280,10 @@ final class LicenseValueTests: XCTestCase {
         "id": " pro ",
         "name": " Pro ",
         "kind": "recurring",
-        "billingInterval": "year",
+        "billingPeriod": {
+          "unit": " month ",
+          "count": 3
+        },
         "priceInMinorUnits": 9900,
         "currencyCode": " usd ",
         "description": " Pro license ",
@@ -293,7 +296,7 @@ final class LicenseValueTests: XCTestCase {
     XCTAssertEqual(offering.id, "pro")
     XCTAssertEqual(offering.name, "Pro")
     XCTAssertEqual(offering.kind, .recurring)
-    XCTAssertEqual(offering.billingInterval, .year)
+    XCTAssertEqual(offering.billingPeriod, LicenseBillingPeriod(unit: .month, count: 3))
     XCTAssertEqual(offering.priceInMinorUnits, 9900)
     XCTAssertEqual(offering.currencyCode, "USD")
     XCTAssertEqual(offering.description, "Pro license")
@@ -320,6 +323,52 @@ final class LicenseValueTests: XCTestCase {
     let kind = try JSONDecoder().decode(LicenseOfferingKind.self, from: data)
 
     XCTAssertEqual(kind, .recurring)
+  }
+
+  func testBillingPeriodDefaultsAndDecoding() throws {
+    XCTAssertEqual(LicenseBillingPeriod.day, LicenseBillingPeriod(unit: .day))
+    XCTAssertEqual(LicenseBillingPeriod.week, LicenseBillingPeriod(unit: .week))
+    XCTAssertEqual(LicenseBillingPeriod.month, LicenseBillingPeriod(unit: .month))
+    XCTAssertEqual(LicenseBillingPeriod.year, LicenseBillingPeriod(unit: .year))
+
+    let countedPeriod = """
+      {
+        "unit": " year ",
+        "count": 2
+      }
+      """.data(using: .utf8)!
+    let uncountedPeriod = """
+      {
+        "unit": "month"
+      }
+      """.data(using: .utf8)!
+
+    let period = try JSONDecoder().decode(LicenseBillingPeriod.self, from: countedPeriod)
+    let defaultedPeriod = try JSONDecoder().decode(
+      LicenseBillingPeriod.self,
+      from: uncountedPeriod
+    )
+
+    XCTAssertEqual(period, LicenseBillingPeriod(unit: .year, count: 2))
+    XCTAssertEqual(defaultedPeriod, .month)
+  }
+
+  func testBillingPeriodDecodeRejectsInvalidValues() {
+    let invalidUnit = """
+      {
+        "unit": "quarter",
+        "count": 1
+      }
+      """.data(using: .utf8)!
+    let invalidCount = """
+      {
+        "unit": "month",
+        "count": 0
+      }
+      """.data(using: .utf8)!
+
+    XCTAssertThrowsError(try JSONDecoder().decode(LicenseBillingPeriod.self, from: invalidUnit))
+    XCTAssertThrowsError(try JSONDecoder().decode(LicenseBillingPeriod.self, from: invalidCount))
   }
 
   func testOfferingDecodeRejectsNegativePrice() {

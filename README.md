@@ -20,7 +20,7 @@ licensing provider.
 Add LicenseKit as a Swift Package dependency:
 
 ```swift
-.package(url: "https://github.com/naviapps/license-kit.git", from: "0.1.0")
+.package(url: "https://github.com/naviapps/license-kit.git", from: "1.0.0")
 ```
 
 Then add `LicenseKit` to the target that needs licensing support.
