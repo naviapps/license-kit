@@ -14,7 +14,7 @@ final class LicenseManagerDeactivationTests: XCTestCase {
     )
 
     async let activationState: LicenseState = manager.activate(licenseKey: "KEY")
-    try await Task.sleep(nanoseconds: 10_000_000)
+    try await waitForManagerState { manager.isActivating }
 
     do {
       try await manager.deactivate()
@@ -36,7 +36,7 @@ final class LicenseManagerDeactivationTests: XCTestCase {
     )
 
     async let refresh = manager.refresh()
-    try await Task.sleep(nanoseconds: 10_000_000)
+    try await waitForManagerState { manager.isRefreshing }
 
     do {
       try await manager.deactivate()

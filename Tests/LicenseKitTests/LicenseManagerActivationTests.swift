@@ -141,7 +141,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     async let first: LicenseState = manager.activate(licenseKey: "KEY")
-    try await Task.sleep(nanoseconds: 10_000_000)
+    try await waitForManagerState { manager.isActivating }
 
     XCTAssertThrowsError(try manager.applyActivation(activation)) { error in
       XCTAssertEqual(error as? LicenseError, .activationInProgress)
@@ -160,7 +160,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     async let refresh = manager.refresh()
-    try await Task.sleep(nanoseconds: 10_000_000)
+    try await waitForManagerState { manager.isRefreshing }
 
     XCTAssertThrowsError(try manager.applyActivation(makeActivation(planID: "team"))) { error in
       XCTAssertEqual(error as? LicenseError, .refreshInProgress)
@@ -406,7 +406,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     async let first: LicenseState = manager.activate(licenseKey: "KEY")
-    try await Task.sleep(nanoseconds: 10_000_000)
+    try await waitForManagerState { manager.isActivating }
 
     do {
       try await manager.activate(licenseKey: "KEY")
@@ -428,7 +428,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     async let refresh = manager.refresh()
-    try await Task.sleep(nanoseconds: 10_000_000)
+    try await waitForManagerState { manager.isRefreshing }
 
     do {
       try await manager.activate(licenseKey: "KEY")

@@ -123,7 +123,7 @@ final class LicenseManagerRefreshTests: XCTestCase {
     )
 
     async let activationState: LicenseState = manager.activate(licenseKey: "KEY")
-    try await Task.sleep(nanoseconds: 10_000_000)
+    try await waitForManagerState { manager.isActivating }
 
     let result = try await manager.refresh()
 

@@ -1,4 +1,5 @@
 import Foundation
+import XCTest
 
 @testable import LicenseKit
 
@@ -154,4 +155,17 @@ func makeState(
     gracePeriodExpiresAt: gracePeriodExpiresAt,
     lastRefreshFailure: lastRefreshFailure
   )
+}
+
+@MainActor
+func waitForManagerState(
+  file: StaticString = #filePath,
+  line: UInt = #line,
+  _ predicate: @MainActor () -> Bool
+) async throws {
+  for _ in 0..<1_000 {
+    if predicate() { return }
+    try await Task.sleep(nanoseconds: 1_000_000)
+  }
+  XCTFail("Timed out waiting for manager state.", file: file, line: line)
 }
