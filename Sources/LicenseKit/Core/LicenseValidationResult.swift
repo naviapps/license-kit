@@ -1,61 +1,70 @@
 import Foundation
 
+/// The provider result for a completed license validation check.
 public struct LicenseValidationResult: Codable, Equatable, Sendable {
+  /// Whether the activation is still valid.
   public let isValid: Bool
+
+  /// The normalized current plan identifier for valid activations.
   public let planID: String?
+
+  /// The time the activation stops being locally usable, if it expires.
   public let expiresAt: Date?
-  public let remainingActivations: Int?
-  public let customerID: String?
 
   private enum CodingKeys: String, CodingKey {
     case isValid
     case planID
     case expiresAt
-    case remainingActivations
-    case customerID
   }
 
   public init(
     isValid: Bool,
     planID: String? = nil,
-    expiresAt: Date? = nil,
-    remainingActivations: Int? = nil,
-    customerID: String? = nil
+    expiresAt: Date? = nil
   ) {
-    if let remainingActivations {
-      precondition(
-        remainingActivations >= 0,
-        "LicenseValidationResult remainingActivations must not be negative."
-      )
-    }
-
     self.isValid = isValid
-    self.planID = planID?.licenseKitTrimmedNonEmpty
+    self.planID = isValid ? planID?.licenseKitTrimmedNonEmpty : nil
     self.expiresAt = expiresAt
-    self.remainingActivations = remainingActivations
-    self.customerID = customerID?.licenseKitTrimmedNonEmpty
   }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    let remainingActivations = try container.decodeIfPresent(
-      Int.self,
-      forKey: .remainingActivations
-    )
-    if let remainingActivations, remainingActivations < 0 {
-      throw DecodingError.dataCorruptedError(
-        forKey: .remainingActivations,
-        in: container,
-        debugDescription: "LicenseValidationResult remainingActivations must not be negative."
-      )
-    }
-
     self.init(
       isValid: try container.decode(Bool.self, forKey: .isValid),
       planID: try container.decodeIfPresent(String.self, forKey: .planID),
-      expiresAt: try container.decodeIfPresent(Date.self, forKey: .expiresAt),
-      remainingActivations: remainingActivations,
-      customerID: try container.decodeIfPresent(String.self, forKey: .customerID)
+      expiresAt: try container.decodeIfPresent(Date.self, forKey: .expiresAt)
+    )
+  }
+}
+
+struct LicenseValidationSnapshot: Sendable, Equatable {
+  let planID: String?
+  let isLicensed: Bool
+  let expiresAt: Date?
+  let checkedAt: Date
+
+  init(
+    planID: String?,
+    isLicensed: Bool,
+    expiresAt: Date?,
+    checkedAt: Date = Date()
+  ) {
+    self.planID = planID?.licenseKitTrimmedNonEmpty
+    self.isLicensed = isLicensed
+    self.expiresAt = expiresAt
+    self.checkedAt = checkedAt
+  }
+
+  init(
+    result: LicenseValidationResult,
+    activation: LicenseActivation,
+    checkedAt: Date = Date()
+  ) {
+    self.init(
+      planID: result.isValid ? result.planID ?? activation.planID : nil,
+      isLicensed: result.isValid,
+      expiresAt: result.expiresAt,
+      checkedAt: checkedAt
     )
   }
 }

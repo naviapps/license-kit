@@ -1,11 +1,15 @@
 import Foundation
 
+/// The main license state coordinator for application code.
 @MainActor
 public final class LicenseManager: ObservableObject {
+  /// The current normalized license state.
   @Published public private(set) var state: LicenseState
 
-  public let configuration: LicenseConfiguration
+  /// The policy used to decide when refreshes are needed and how failures are handled.
   public let refreshPolicy: LicenseRefreshPolicy
+
+  /// A storage error captured while restoring persisted state during initialization.
   public let initialRestoreError: LicenseError?
 
   private var store: LicenseStateStore {
@@ -15,45 +19,35 @@ public final class LicenseManager: ObservableObject {
   }
 
   private let provider: LicenseProvider
-  private let offeringProvider: LicenseOfferingProvider?
-  private let customerPortalProvider: LicenseCustomerPortalProvider?
   private let activationStorage: LicenseActivationStorage
   private let stateSnapshotStorage: LicenseStateSnapshotStorage?
-  private let deviceIdentifierProvider: LicenseDeviceIdentifierProvider?
-  private let deviceNameProvider: @Sendable () -> String
+  private let validationIdentifierProvider: @Sendable () -> String?
 
   public var plan: LicensePlan { state.plan }
   public var activation: LicenseActivation? { state.activation }
   public var source: LicenseSource? { state.source }
+  public var isActivating: Bool { state.isActivating }
   public var isRefreshing: Bool { state.isRefreshing }
-  public var offerings: [LicenseOffering] { state.offerings }
   public var lastValidatedAt: Date? { state.lastValidatedAt }
   public var status: LicenseStatus { state.status }
   public var isLicensed: Bool { state.isLicensed }
   public var gracePeriodExpiresAt: Date? { state.gracePeriodExpiresAt }
   public var lastRefreshFailure: LicenseRefreshFailure? { state.lastRefreshFailure }
 
+  /// Creates a manager from a provider, activation storage, and optional state snapshot storage.
   public init(
     provider: LicenseProvider,
     activationStorage: LicenseActivationStorage,
-    configuration: LicenseConfiguration = .empty,
     refreshPolicy: LicenseRefreshPolicy = .default,
-    offeringProvider: LicenseOfferingProvider? = nil,
-    customerPortalProvider: LicenseCustomerPortalProvider? = nil,
     stateSnapshotStorage: LicenseStateSnapshotStorage? = nil,
-    deviceIdentifierProvider: LicenseDeviceIdentifierProvider? = nil,
-    deviceNameProvider: @escaping @Sendable () -> String = { "Mac" },
+    validationIdentifierProvider: @escaping @Sendable () -> String? = { nil },
     restorePersistedActivation: Bool = true
   ) {
-    self.configuration = configuration
     self.provider = provider
-    self.offeringProvider = offeringProvider
-    self.customerPortalProvider = customerPortalProvider
     self.activationStorage = activationStorage
     self.stateSnapshotStorage = stateSnapshotStorage
     self.refreshPolicy = refreshPolicy
-    self.deviceIdentifierProvider = deviceIdentifierProvider
-    self.deviceNameProvider = deviceNameProvider
+    self.validationIdentifierProvider = validationIdentifierProvider
 
     var initialRestoreError: LicenseError?
     var resolvedActivation: LicenseActivation?
@@ -61,7 +55,7 @@ public final class LicenseManager: ObservableObject {
       do {
         resolvedActivation = try activationStorage.load()
       } catch {
-        initialRestoreError = .storageFailure
+        initialRestoreError = .storageFailure(error)
       }
     }
 
@@ -70,20 +64,17 @@ public final class LicenseManager: ObservableObject {
       do {
         restoredState = try Self.loadStateSnapshot(
           from: stateSnapshotStorage,
-          matching: resolvedActivation,
-          offerings: configuration.offerings
+          matching: resolvedActivation
         )
       } catch {
-        initialRestoreError = .storageFailure
+        initialRestoreError = .storageFailure(error)
         restoredState = nil
       }
     } else {
       restoredState = nil
     }
 
-    self.initialRestoreError = initialRestoreError
     let store = LicenseStateStore(
-      offerings: configuration.offerings,
       initialActivation: resolvedActivation,
       resolvedPlan: restoredState?.plan,
       lastValidatedAt: restoredState?.lastValidatedAt,
@@ -91,13 +82,24 @@ public final class LicenseManager: ObservableObject {
       gracePeriodExpiresAt: restoredState?.gracePeriodExpiresAt,
       lastRefreshFailure: restoredState?.lastRefreshFailure
     )
+    if restorePersistedActivation, resolvedActivation != nil, store.activation == nil {
+      do {
+        try activationStorage.delete()
+        try stateSnapshotStorage?.delete()
+      } catch {
+        initialRestoreError = .storageFailure(error)
+      }
+    }
+
+    self.initialRestoreError = initialRestoreError
     self.store = store
     self.state = store.state
   }
 
+  /// Activates a license key through the configured provider and persists the resolved activation.
   @discardableResult
   public func activate(licenseKey: String) async throws -> LicenseState {
-    guard store.status != .activating else {
+    guard store.isActivating == false else {
       throw LicenseError.activationInProgress
     }
     guard store.isRefreshing == false else {
@@ -114,10 +116,7 @@ public final class LicenseManager: ObservableObject {
 
     let activation: LicenseActivation
     do {
-      activation = try await provider.activate(
-        licenseKey: normalizedKey,
-        deviceName: deviceName()
-      )
+      activation = try await provider.activate(licenseKey: normalizedKey)
     } catch let error as LicenseProviderError {
       restoreAfterActivationFailure(previousStore)
       throw mapProviderError(error)
@@ -126,46 +125,55 @@ public final class LicenseManager: ObservableObject {
       throw error
     } catch {
       restoreAfterActivationFailure(previousStore)
-      throw LicenseError.providerRequestFailure(message: String(describing: error))
+      throw LicenseError.requestFailure(message: String(describing: error))
     }
 
     let resolvedActivation = activationFillingMissingLicenseKey(
       activation,
       licenseKey: normalizedKey
     )
+    guard resolvedActivation.isExpired == false else {
+      restoreAfterActivationFailure(previousStore)
+      throw LicenseError.expiredLicense
+    }
     do {
       try activationStorage.save(resolvedActivation)
     } catch {
       store = previousStore
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
     store.applyActivation(resolvedActivation)
     try saveStateSnapshot()
     return state
   }
 
+  /// Persists an already resolved activation without calling the provider.
   @discardableResult
   public func applyActivation(_ activation: LicenseActivation) throws -> LicenseState {
-    guard store.status != .activating else {
+    guard store.isActivating == false else {
       throw LicenseError.activationInProgress
     }
     guard store.isRefreshing == false else {
       throw LicenseError.refreshInProgress
     }
+    guard activation.isExpired == false else {
+      throw LicenseError.expiredLicense
+    }
 
     do {
       try activationStorage.save(activation)
     } catch {
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
     store.applyActivation(activation)
     try saveStateSnapshot()
     return state
   }
 
+  /// Deactivates the current activation with the provider and clears persisted local state.
   @discardableResult
   public func deactivate() async throws -> LicenseState {
-    guard store.status != .activating else {
+    guard store.isActivating == false else {
       throw LicenseError.activationInProgress
     }
     guard store.isRefreshing == false else {
@@ -179,20 +187,20 @@ public final class LicenseManager: ObservableObject {
       } catch let error as LicenseProviderError {
         providerError = error
       } catch {
-        providerError = .networkFailure(message: String(describing: error))
+        providerError = .transportFailure(message: String(describing: error))
       }
     }
     do {
       try activationStorage.delete()
     } catch {
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
 
     do {
       try deleteStateSnapshot()
     } catch {
       store.markDeactivated()
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
     store.markDeactivated()
 
@@ -202,31 +210,20 @@ public final class LicenseManager: ObservableObject {
     return state
   }
 
-  public func needsRefresh(
-    now: Date = Date(),
-    validationInterval: TimeInterval? = nil
-  ) -> Bool {
-    if let validationInterval {
-      precondition(
-        validationInterval.isFinite && validationInterval >= 0,
-        "LicenseManager needsRefresh validationInterval must be finite and non-negative."
-      )
-    }
-
+  /// Returns whether the current activation should be refreshed at `now`.
+  public func needsRefresh(now: Date = Date()) -> Bool {
+    guard let activation = store.activation else { return false }
+    if activation.isExpired(at: now) { return true }
     guard refreshPolicy.isEnabled else { return false }
-    guard store.activation != nil else { return false }
     guard let lastValidatedAt = store.lastValidatedAt else { return true }
-    let allowedAge = validationInterval ?? refreshPolicy.validationInterval
-    return now.timeIntervalSince(lastValidatedAt) >= allowedAge
+    return now.timeIntervalSince(lastValidatedAt) >= refreshPolicy.validationInterval
   }
 
+  /// Refreshes the current activation with the provider when refresh is allowed.
   @discardableResult
   public func refresh() async throws -> LicenseRefreshResult {
-    guard store.status != .activating else {
+    guard store.isActivating == false else {
       return LicenseRefreshResult(outcome: .skippedActivationInProgress, state: state)
-    }
-    guard refreshPolicy.isEnabled else {
-      return LicenseRefreshResult(outcome: .skippedRefreshDisabled, state: state)
     }
     guard store.isRefreshing == false else {
       return LicenseRefreshResult(outcome: .skippedRefreshInProgress, state: state)
@@ -240,32 +237,22 @@ public final class LicenseManager: ObservableObject {
     }
 
     let now = Date()
-    var offeringLoadFailure: LicenseRefreshFailure?
-    if let offeringProvider,
-      configuration.usesDynamicOfferings,
-      let catalogID = configuration.dynamicOfferingsCatalogID
-    {
-      do {
-        let offerings = try await offeringProvider.offerings(forCatalogID: catalogID)
-        store.setOfferings(offerings)
-      } catch {
-        offeringLoadFailure = LicenseRefreshFailure(
-          reason: .offeringLoadFailure,
-          message: String(describing: error),
-          occurredAt: now
-        )
-      }
-    }
-
     guard let activation = store.activation else {
-      if let offeringLoadFailure {
-        store.recordRefreshFailure(offeringLoadFailure)
-      }
-      return finishRefresh(outcome: .skippedNoActivation, offeringLoadFailure: offeringLoadFailure)
+      return finishRefresh(outcome: .skippedNoActivation)
+    }
+    if activation.isExpired(at: now) {
+      return try finishExpiredActivationRefresh(
+        activation,
+        now: now,
+        previousStore: previousStore
+      )
+    }
+    guard refreshPolicy.isEnabled else {
+      return finishRefresh(outcome: .skippedRefreshDisabled)
     }
 
     let result: LicenseValidationResult
-    let validationIdentifier = activation.activationID ?? deviceIdentifier()
+    let validationIdentifier = activation.activationID ?? validationIdentifier()
     do {
       result = try await provider.validate(
         activation,
@@ -275,16 +262,14 @@ public final class LicenseManager: ObservableObject {
       return try finishValidationFailure(
         error,
         now: now,
-        previousStore: previousStore,
-        offeringLoadFailure: offeringLoadFailure
+        previousStore: previousStore
       )
     } catch {
-      let providerError = LicenseProviderError.networkFailure(message: String(describing: error))
+      let providerError = LicenseProviderError.transportFailure(message: String(describing: error))
       return try finishValidationFailure(
         providerError,
         now: now,
-        previousStore: previousStore,
-        offeringLoadFailure: offeringLoadFailure
+        previousStore: previousStore
       )
     }
 
@@ -301,45 +286,14 @@ public final class LicenseManager: ObservableObject {
       }
     } catch {
       store = previousStore
-      throw LicenseError.storageFailure
-    }
-    if let offeringLoadFailure {
-      store.recordRefreshFailure(offeringLoadFailure)
+      throw LicenseError.storageFailure(error)
     }
     try saveStateSnapshot()
-    return finishRefresh(
-      outcome: refreshOutcome(for: store.status),
-      offeringLoadFailure: offeringLoadFailure
-    )
+    return finishRefresh(outcome: refreshOutcome(for: store.status))
   }
 
-  public func customerPortalURL() async throws -> URL? {
-    guard let customerPortalProvider else { return nil }
-    guard let customerID = store.activation?.customerID, customerID.isEmpty == false else {
-      return nil
-    }
-    do {
-      return try await customerPortalProvider.customerPortalURL(forCustomerID: customerID)
-    } catch let error as LicenseProviderError {
-      throw mapProviderError(error)
-    } catch {
-      throw LicenseError.providerRequestFailure(message: String(describing: error))
-    }
-  }
-
-  @discardableResult
-  public func setOfferings(_ offerings: [LicenseOffering]) -> LicenseState {
-    store.setOfferings(offerings)
-    return state
-  }
-
-  private func deviceName() -> String {
-    let name = deviceNameProvider().trimmingCharacters(in: .whitespacesAndNewlines)
-    return name.isEmpty ? "Mac" : name
-  }
-
-  private func deviceIdentifier() -> String? {
-    guard let identifier = deviceIdentifierProvider?.deviceIdentifier() else { return nil }
+  private func validationIdentifier() -> String? {
+    guard let identifier = validationIdentifierProvider() else { return nil }
     let trimmedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmedIdentifier.isEmpty ? nil : trimmedIdentifier
   }
@@ -353,12 +307,9 @@ public final class LicenseManager: ObservableObject {
       source: activation.source,
       licenseKey: licenseKey,
       planID: activation.planID,
-      customerID: activation.customerID,
-      deviceName: activation.deviceName,
       activationID: activation.activationID,
       activatedAt: activation.activatedAt,
-      expiresAt: activation.expiresAt,
-      remainingActivations: activation.remainingActivations
+      expiresAt: activation.expiresAt
     )
   }
 
@@ -375,12 +326,12 @@ public final class LicenseManager: ObservableObject {
       .invalidLicense
     case .activationLimitReached:
       .activationLimitReached
-    case .requestFailure(let message), .networkFailure(let message):
-      .providerRequestFailure(message: message)
+    case .requestFailure, .transportFailure:
+      .requestFailure(message: error.normalizedMessage ?? LicenseError.defaultRequestFailureMessage)
     case .serverFailure(let code):
-      .providerServerFailure(statusCode: code)
-    case .invalidProviderURL:
-      .invalidProviderURL
+      .serverFailure(statusCode: code)
+    case .invalidConfiguration:
+      .invalidProviderConfiguration
     case .responseDecodingFailure:
       .unexpectedProviderResponse
     }
@@ -401,10 +352,10 @@ public final class LicenseManager: ObservableObject {
         error: error
       )
       return store.status == .invalid ? .invalid : .gracePeriod
-    case .networkFailure, .invalidProviderURL, .responseDecodingFailure, .requestFailure:
+    case .transportFailure, .invalidConfiguration, .responseDecodingFailure, .requestFailure:
       markGraceOrInvalidate(
         now: now,
-        gracePeriod: refreshPolicy.recoverableFailureGracePeriod,
+        gracePeriod: refreshPolicy.failureGracePeriod,
         error: error
       )
       return store.status == .invalid ? .invalid : .gracePeriod
@@ -414,8 +365,7 @@ public final class LicenseManager: ObservableObject {
   private func finishValidationFailure(
     _ error: LicenseProviderError,
     now: Date,
-    previousStore: LicenseStateStore,
-    offeringLoadFailure: LicenseRefreshFailure?
+    previousStore: LicenseStateStore
   ) throws -> LicenseRefreshResult {
     let failure = LicenseRefreshFailure(error: error, occurredAt: now)
     let outcome = applyValidationFailure(error, now: now)
@@ -425,9 +375,25 @@ public final class LicenseManager: ObservableObject {
     try saveStateSnapshot()
     return finishRefresh(
       outcome: outcome,
-      validationFailure: failure,
-      offeringLoadFailure: offeringLoadFailure
+      validationFailure: failure
     )
+  }
+
+  private func finishExpiredActivationRefresh(
+    _ activation: LicenseActivation,
+    now: Date,
+    previousStore: LicenseStateStore
+  ) throws -> LicenseRefreshResult {
+    let validationSnapshot = LicenseValidationSnapshot(
+      planID: activation.planID,
+      isLicensed: false,
+      expiresAt: activation.expiresAt,
+      checkedAt: now
+    )
+    _ = store.applyValidationSnapshot(validationSnapshot)
+    try deletePersistedActivation(restoring: previousStore)
+    try saveStateSnapshot()
+    return finishRefresh(outcome: .expired)
   }
 
   private func refreshOutcome(for status: LicenseStatus) -> LicenseRefreshOutcome {
@@ -463,8 +429,6 @@ public final class LicenseManager: ObservableObject {
       planID: store.activation?.planID,
       isLicensed: false,
       expiresAt: store.activation?.expiresAt,
-      remainingActivations: store.activation?.remainingActivations,
-      customerID: store.activation?.customerID,
       checkedAt: now
     )
     _ = store.applyValidationSnapshot(validationSnapshot)
@@ -480,7 +444,7 @@ public final class LicenseManager: ObservableObject {
     do {
       try stateSnapshotStorage?.save(snapshot)
     } catch {
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
   }
 
@@ -488,7 +452,7 @@ public final class LicenseManager: ObservableObject {
     do {
       try stateSnapshotStorage?.delete()
     } catch {
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
   }
 
@@ -497,31 +461,28 @@ public final class LicenseManager: ObservableObject {
       try activationStorage.delete()
     } catch {
       store = previousStore
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
   }
 
   private static func loadStateSnapshot(
     from stateSnapshotStorage: LicenseStateSnapshotStorage?,
-    matching activation: LicenseActivation,
-    offerings: [LicenseOffering]
+    matching activation: LicenseActivation
   ) throws -> LicenseState? {
     guard let snapshot = try stateSnapshotStorage?.load() else { return nil }
     guard snapshot.matches(activation: activation) else { return nil }
-    return snapshot.restoreState(activation: activation, offerings: offerings)
+    return snapshot.restoreState(activation: activation)
   }
 
   private func finishRefresh(
     outcome: LicenseRefreshOutcome,
-    validationFailure: LicenseRefreshFailure? = nil,
-    offeringLoadFailure: LicenseRefreshFailure? = nil
+    validationFailure: LicenseRefreshFailure? = nil
   ) -> LicenseRefreshResult {
     store.setRefreshing(false)
     return LicenseRefreshResult(
       outcome: outcome,
       state: store.state,
-      validationFailure: validationFailure,
-      offeringLoadFailure: offeringLoadFailure
+      validationFailure: validationFailure
     )
   }
 }

@@ -1,21 +1,30 @@
 import Foundation
 
+/// Controls when provider validation runs and how refresh failures are handled.
 public struct LicenseRefreshPolicy: Equatable, Sendable {
+  /// Whether provider refreshes are enabled.
   public let isEnabled: Bool
+
+  /// The minimum interval between successful validations.
   public let validationInterval: TimeInterval
-  public let recoverableFailureGracePeriod: TimeInterval
+
+  /// The grace period used for recoverable validation failures.
+  public let failureGracePeriod: TimeInterval
+
+  /// The grace period used for provider server failures.
   public let serverFailureGracePeriod: TimeInterval
 
+  /// Creates an enabled refresh policy with validated intervals.
   public init(
     validationInterval: TimeInterval,
-    recoverableFailureGracePeriod: TimeInterval,
+    failureGracePeriod: TimeInterval,
     serverFailureGracePeriod: TimeInterval
   ) throws {
     guard Self.isValidInterval(validationInterval) else {
       throw LicenseRefreshPolicyError.invalidValidationInterval
     }
-    guard Self.isValidInterval(recoverableFailureGracePeriod) else {
-      throw LicenseRefreshPolicyError.invalidRecoverableFailureGracePeriod
+    guard Self.isValidInterval(failureGracePeriod) else {
+      throw LicenseRefreshPolicyError.invalidFailureGracePeriod
     }
     guard Self.isValidInterval(serverFailureGracePeriod) else {
       throw LicenseRefreshPolicyError.invalidServerFailureGracePeriod
@@ -23,7 +32,7 @@ public struct LicenseRefreshPolicy: Equatable, Sendable {
     self.init(
       isEnabled: true,
       uncheckedValidationInterval: validationInterval,
-      recoverableFailureGracePeriod: recoverableFailureGracePeriod,
+      failureGracePeriod: failureGracePeriod,
       serverFailureGracePeriod: serverFailureGracePeriod
     )
   }
@@ -35,26 +44,59 @@ public struct LicenseRefreshPolicy: Equatable, Sendable {
   private init(
     isEnabled: Bool,
     uncheckedValidationInterval validationInterval: TimeInterval,
-    recoverableFailureGracePeriod: TimeInterval,
+    failureGracePeriod: TimeInterval,
     serverFailureGracePeriod: TimeInterval
   ) {
     self.isEnabled = isEnabled
     self.validationInterval = validationInterval
-    self.recoverableFailureGracePeriod = recoverableFailureGracePeriod
+    self.failureGracePeriod = failureGracePeriod
     self.serverFailureGracePeriod = serverFailureGracePeriod
   }
 
+  /// A conservative refresh policy suitable for most direct-license apps.
   public static let `default` = LicenseRefreshPolicy(
     isEnabled: true,
     uncheckedValidationInterval: 24 * 60 * 60,
-    recoverableFailureGracePeriod: 7 * 24 * 60 * 60,
+    failureGracePeriod: 7 * 24 * 60 * 60,
     serverFailureGracePeriod: 24 * 60 * 60
   )
 
+  /// A policy that disables provider refresh while still allowing local expiration checks.
   public static let never = LicenseRefreshPolicy(
     isEnabled: false,
     uncheckedValidationInterval: 0,
-    recoverableFailureGracePeriod: 0,
+    failureGracePeriod: 0,
     serverFailureGracePeriod: 0
   )
+}
+
+/// Validation errors thrown while creating a refresh policy.
+public enum LicenseRefreshPolicyError: Error, Equatable, Sendable {
+  /// The validation interval was negative, infinite, or NaN.
+  case invalidValidationInterval
+
+  /// The failure grace period was negative, infinite, or NaN.
+  case invalidFailureGracePeriod
+
+  /// The server failure grace period was negative, infinite, or NaN.
+  case invalidServerFailureGracePeriod
+}
+
+extension LicenseRefreshPolicyError: CustomStringConvertible {
+  public var description: String {
+    switch self {
+    case .invalidValidationInterval:
+      "invalid_validation_interval"
+    case .invalidFailureGracePeriod:
+      "invalid_failure_grace_period"
+    case .invalidServerFailureGracePeriod:
+      "invalid_server_failure_grace_period"
+    }
+  }
+}
+
+extension LicenseRefreshPolicyError: LocalizedError {
+  public var errorDescription: String? {
+    description
+  }
 }

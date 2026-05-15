@@ -20,8 +20,8 @@ final class LicenseKeyNormalizerTests: XCTestCase {
   }
 
   func testLicenseKeyNormalizerPreservesProviderKeyCharacters() {
-    let normalized = LicenseKeyNormalizer.normalize(" abc-def_123 ")
+    let normalized = LicenseKeyNormalizer.normalize(" abc-def_123+/=: ")
 
-    XCTAssertEqual(normalized, "abc-def_123")
+    XCTAssertEqual(normalized, "abc-def_123+/=:")
   }
 }

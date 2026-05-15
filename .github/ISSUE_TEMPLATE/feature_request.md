@@ -10,7 +10,7 @@ assignees: ""
 
 Describe the requested improvement in one or two sentences.
 
-Do not include secrets, tokens, license keys, customer identifiers, activation
+Do not include secrets, tokens, license keys, account identifiers, activation
 identifiers, private logs, or provider-specific credentials in public issues.
 
 ## Use Case

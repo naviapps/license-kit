@@ -1,8 +1,10 @@
 import Foundation
 
+/// A provider-neutral identifier for the source that supplied a license activation.
 public struct LicenseSource: Codable, Equatable, Hashable, Sendable, RawRepresentable,
   ExpressibleByStringLiteral
 {
+  /// The normalized source identifier.
   public let rawValue: String
 
   public init(rawValue: String) {
@@ -24,6 +26,7 @@ public struct LicenseSource: Codable, Equatable, Hashable, Sendable, RawRepresen
     try container.encode(rawValue)
   }
 
+  /// The default source used when an activation does not need source-specific handling.
   public static let `default` = LicenseSource(rawValue: defaultRawValue)
 
   private static let defaultRawValue = "default"

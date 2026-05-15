@@ -1,49 +1,33 @@
 # ``LicenseKit``
 
-Manage app license state through provider-backed activation, validation, and
-refresh flows.
+Manage Apple platform app license state through provider-backed activation,
+validation, refresh, and persistence flows.
 
 ## Overview
 
-LicenseKit defines a small provider-neutral core for macOS app licensing. It
-does not call a billing or licensing service directly. Host apps implement the
-provider protocols, choose secure persistence, and use ``LicenseManager`` as the
-app-facing state boundary.
+LicenseKit is a provider-neutral state layer for Apple platform app licensing.
+Host apps implement ``LicenseProvider``, choose persistence, and use
+``LicenseManager`` as the app-facing state boundary. Provider validation remains
+the source of truth; persisted state is only a local restore aid.
 
-Import `LicenseKit` when you want to:
-
-- Activate and deactivate license keys with ``LicenseManager``.
-- Validate persisted activations through ``LicenseProvider``.
-- Preserve local activation with ``LicenseActivationStorage``.
-- Configure validation intervals and grace periods with
-  ``LicenseRefreshPolicy``.
-- Expose offerings and customer portal links through injectable providers.
-
-Provider validation remains the source of truth. Persisted state is only a local
-snapshot used to restore the last known app-facing state.
-
-The package keeps one Swift module and groups source files by API
-responsibility: core values, management, provider contracts, and persistence.
+LicenseKit does not provide purchase flows, catalog loading, account-management
+flows, provider SDKs, UI, or provider-specific display logic.
 
 ## Creating a Manager
 
-The minimal integration path is:
+Implement ``LicenseProvider`` for your backend, create one ``LicenseManager``
+with secure activation storage, then call
+``LicenseManager/activate(licenseKey:)``, ``LicenseManager/refresh()``, and
+``LicenseManager/deactivate()`` from the app layer.
 
-1. Implement ``LicenseProvider`` for your backend.
-2. Create one ``LicenseManager`` with secure activation storage.
-3. Call ``LicenseManager/activate(licenseKey:)`` when the user enters a key.
-4. Call ``LicenseManager/refresh()`` when the app starts or resumes.
-5. Call ``LicenseManager/deactivate()`` when the user removes the license.
-
-LicenseKit owns local state, persistence boundaries, refresh policy, and public
-value types. Your app owns the backend client, UI, billing screens, and any
-logging. The `api` object in the examples represents your own backend client.
-
-Create a manager with an explicit provider and secure activation storage:
+Create a manager with an explicit provider and secure activation storage. The
+`MyLicenseProvider` and `licenseAPI` values represent your app's provider and
+backend client. ``LicenseManager`` is `@MainActor` and publishes
+``LicenseState``, so keep it at the app or UI boundary:
 
 ```swift
 let manager = LicenseManager(
-  provider: MyLicenseProvider(),
+  provider: MyLicenseProvider(licenseAPI: licenseAPI),
   activationStorage: KeychainLicenseActivationStorage(
     service: "com.example.app",
     account: "license"
@@ -52,12 +36,12 @@ let manager = LicenseManager(
 )
 ```
 
-Use ``LicenseManager/activate(licenseKey:)``,
-``LicenseManager/refresh()``, and ``LicenseManager/deactivate()`` from the app
-layer. Mutating operations return the updated ``LicenseState``.
+Mutating operations return the updated ``LicenseState``. ``LicenseState``
+normalizes impossible combinations such as licensed statuses without an
+activation, expired local values, or grace-period state without an expiration.
 
 ```swift
-let state = try await manager.activate(licenseKey: enteredLicenseKey)
+try await manager.activate(licenseKey: enteredLicenseKey)
 
 if manager.needsRefresh() {
   let result = try await manager.refresh()
@@ -65,7 +49,9 @@ if manager.needsRefresh() {
   case .refreshed:
     break
   case .gracePeriod:
-    showOfflineGracePeriodNotice(until: result.state.gracePeriodExpiresAt)
+    if let gracePeriodExpiresAt = result.state.gracePeriodExpiresAt {
+      showOfflineGracePeriodNotice(until: gracePeriodExpiresAt)
+    }
   case .expired, .invalid:
     showLicenseRequiredScreen()
   case .skippedActivationInProgress, .skippedRefreshDisabled,
@@ -75,92 +61,72 @@ if manager.needsRefresh() {
 }
 ```
 
-Dynamic offerings and customer portal links are optional. Add
-``LicenseOfferingProvider`` or ``LicenseCustomerPortalProvider`` only when your
-app needs those flows.
+## Optional Configuration
 
-Use ``LicenseRefreshPolicy/never`` for license sources whose entitlement state
-is supplied externally and should not be refreshed by LicenseKit.
+Start with the minimal manager setup, then add optional configuration only when
+the app needs it:
+
+- Pass `stateSnapshotStorage` to restore local validation metadata such as the
+  last validation time, grace period, and last refresh failure.
+- Pass `validationIdentifierProvider` when your provider needs a stable
+  local identifier and the activation does not include an
+  ``LicenseActivation/activationID``.
+- Use ``LicenseRefreshPolicy/never`` for entitlement sources that should not run
+  provider validation through LicenseKit.
+- Pass a custom Keychain accessibility value or implement
+  ``LicenseActivationStorage`` / ``LicenseStateSnapshotStorage`` when the
+  default persistence does not fit your app.
+
+## State Lifecycle
+
+``LicenseManager`` keeps one active activation at a time. Activation moves the
+state from unlicensed to active. Successful refreshes keep it active; temporary
+provider failures move it into a grace period; definitive invalid or expired
+results clear the activation. Deactivation clears persisted activation state.
 
 ## Provider Contract
 
-Implement ``LicenseProvider`` for your licensing backend:
+``LicenseProvider/activate(licenseKey:)`` returns a non-expired
+``LicenseActivation`` or throws ``LicenseProviderError``. Validation returns
+``LicenseValidationResult`` for completed checks and throws provider errors only
+when validation could not be completed, allowing ``LicenseManager`` to apply
+grace-period handling. Expired activations become expired without entering the
+grace period.
 
-```swift
-struct MyLicenseProvider: LicenseProvider {
-  func activate(licenseKey: String, deviceName: String) async throws -> LicenseActivation {
-    let response = try await api.activate(licenseKey: licenseKey, deviceName: deviceName)
-    return LicenseActivation(
-      licenseKey: licenseKey,
-      planID: response.planID,
-      customerID: response.customerID,
-      deviceName: deviceName,
-      activationID: response.activationID
-    )
-  }
+During validation, the provider receives the full ``LicenseActivation``.
+``LicenseManager`` also supplies a validation identifier using
+``LicenseActivation/activationID`` when available, then the configured validation
+identifier provider as a fallback.
 
-  func deactivate(_ activation: LicenseActivation) async throws {
-    // Call your deactivation API.
-  }
-
-  func validate(
-    _ activation: LicenseActivation,
-    validationIdentifier: String?
-  ) async throws -> LicenseValidationResult {
-    let response = try await api.validate(
-      licenseKey: activation.licenseKey,
-      validationIdentifier: validationIdentifier
-    )
-    return LicenseValidationResult(
-      isValid: response.isValid,
-      planID: response.planID,
-      expiresAt: response.expiresAt,
-      customerID: response.customerID
-    )
-  }
-}
-```
-
-Return ``LicenseValidationResult/isValid`` as `false` only when the backend
-definitively considers the activation invalid. Throw ``LicenseProviderError``
-when validation could not be completed, so ``LicenseManager`` can apply the
-configured grace period.
-Set ``LicenseValidationResult/planID`` only when validation should update the
-active plan.
-Use ``LicenseProviderError/invalidProviderURL`` for provider configuration
-errors, ``LicenseProviderError/networkFailure(message:)`` for transport
-failures, ``LicenseProviderError/serverFailure(statusCode:)`` for backend
-server responses, and ``LicenseProviderError/requestFailure(message:)`` for
-other provider request failures.
-
-Use ``LicenseActivation/source`` only when the app needs to distinguish which
-provider supplied the active activation. LicenseKit tracks one active activation
-at a time.
-
-Read ``LicenseState/source`` or ``LicenseManager/source`` when the app only
-needs the current activation source.
+Use ``LicenseState/source`` or ``LicenseManager/source`` only when the app needs
+to distinguish which provider supplied the single active activation.
 
 ## Persistence
 
 License keys are sensitive application data. Use
 ``KeychainLicenseActivationStorage`` or another secure
 ``LicenseActivationStorage`` implementation in production apps. Avoid logging
-raw license keys, customer identifiers, activation identifiers, or provider
-request bodies.
+raw license keys, activation identifiers, or provider request bodies.
 
 The built-in storage types are defaults, not a required persistence layer.
-Implement ``LicenseActivationStorage`` or ``LicenseStateSnapshotStorage``
-directly for app group storage, encrypted files, database-backed storage, or
-another host-specific strategy.
-State snapshot storage is optional; omit it when restoring the persisted
-activation and refreshing with your provider is sufficient.
+Implement ``LicenseActivationStorage`` or ``LicenseStateSnapshotStorage`` for
+app group, file, database, synchronizable Keychain, access-group Keychain, or
+other host-specific persistence. Storage failures surface as
+``LicenseError/storageFailure(message:)``.
+
+``KeychainLicenseActivationStorage`` defaults to
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and accepts a custom Keychain
+accessibility value when the app needs a stricter policy.
+
+``LicenseStateSnapshot`` stores restorable licensed state only. Terminal,
+incomplete, expired, or mismatched persisted state is treated as no longer
+licensed and removed from persistence when possible.
 
 ## Topics
 
 ### Management
 
 - ``LicenseManager``
-- ``LicenseConfiguration``
 - ``LicenseState``
 - ``LicenseStatus``
 - ``LicenseRefreshPolicy``
@@ -172,9 +138,6 @@ activation and refreshing with your provider is sufficient.
 ### Provider Contracts
 
 - ``LicenseProvider``
-- ``LicenseOfferingProvider``
-- ``LicenseCustomerPortalProvider``
-- ``LicenseDeviceIdentifierProvider``
 - ``UnavailableLicenseProvider``
 
 ### Values
@@ -182,10 +145,6 @@ activation and refreshing with your provider is sufficient.
 - ``LicenseActivation``
 - ``LicenseSource``
 - ``LicensePlan``
-- ``LicenseOffering``
-- ``LicenseOfferingKind``
-- ``LicenseBillingPeriod``
-- ``LicenseBillingPeriodUnit``
 - ``LicenseValidationResult``
 
 ### Persistence
@@ -203,7 +162,5 @@ activation and refreshing with your provider is sufficient.
 ### Errors
 
 - ``LicenseError``
-- ``LicenseErrorCode``
 - ``LicenseProviderError``
-- ``LicenseConfigurationError``
 - ``LicenseRefreshPolicyError``

@@ -3,30 +3,39 @@ import XCTest
 @testable import LicenseKit
 
 final class LicenseRefreshPolicyTests: XCTestCase {
-  func testAcceptsNonNegativeIntervals() throws {
-    let policy = try LicenseRefreshPolicy(
+  func testInitializerAcceptsZeroAndPositiveIntervals() throws {
+    let zeroPolicy = try LicenseRefreshPolicy(
       validationInterval: 0,
-      recoverableFailureGracePeriod: 1,
+      failureGracePeriod: 0,
+      serverFailureGracePeriod: 0
+    )
+    let positivePolicy = try LicenseRefreshPolicy(
+      validationInterval: 1,
+      failureGracePeriod: 1,
       serverFailureGracePeriod: 2
     )
 
-    XCTAssertTrue(policy.isEnabled)
-    XCTAssertEqual(policy.validationInterval, 0)
-    XCTAssertEqual(policy.recoverableFailureGracePeriod, 1)
-    XCTAssertEqual(policy.serverFailureGracePeriod, 2)
+    XCTAssertTrue(zeroPolicy.isEnabled)
+    XCTAssertEqual(zeroPolicy.validationInterval, 0)
+    XCTAssertEqual(zeroPolicy.failureGracePeriod, 0)
+    XCTAssertEqual(zeroPolicy.serverFailureGracePeriod, 0)
+    XCTAssertTrue(positivePolicy.isEnabled)
+    XCTAssertEqual(positivePolicy.validationInterval, 1)
+    XCTAssertEqual(positivePolicy.failureGracePeriod, 1)
+    XCTAssertEqual(positivePolicy.serverFailureGracePeriod, 2)
   }
 
   func testDefaultPolicyEnablesRefreshWithConservativeIntervals() {
     XCTAssertTrue(LicenseRefreshPolicy.default.isEnabled)
     XCTAssertEqual(LicenseRefreshPolicy.default.validationInterval, 24 * 60 * 60)
-    XCTAssertEqual(LicenseRefreshPolicy.default.recoverableFailureGracePeriod, 7 * 24 * 60 * 60)
+    XCTAssertEqual(LicenseRefreshPolicy.default.failureGracePeriod, 7 * 24 * 60 * 60)
     XCTAssertEqual(LicenseRefreshPolicy.default.serverFailureGracePeriod, 24 * 60 * 60)
   }
 
-  func testNeverDisablesRefresh() {
+  func testNeverPolicyDisablesProviderRefresh() {
     XCTAssertFalse(LicenseRefreshPolicy.never.isEnabled)
     XCTAssertEqual(LicenseRefreshPolicy.never.validationInterval, 0)
-    XCTAssertEqual(LicenseRefreshPolicy.never.recoverableFailureGracePeriod, 0)
+    XCTAssertEqual(LicenseRefreshPolicy.never.failureGracePeriod, 0)
     XCTAssertEqual(LicenseRefreshPolicy.never.serverFailureGracePeriod, 0)
   }
 
@@ -36,20 +45,32 @@ final class LicenseRefreshPolicyTests: XCTestCase {
       "invalid_validation_interval"
     )
     XCTAssertEqual(
-      LicenseRefreshPolicyError.invalidRecoverableFailureGracePeriod.description,
-      "invalid_recoverable_failure_grace_period"
+      LicenseRefreshPolicyError.invalidValidationInterval.errorDescription,
+      "invalid_validation_interval"
+    )
+    XCTAssertEqual(
+      LicenseRefreshPolicyError.invalidFailureGracePeriod.description,
+      "invalid_failure_grace_period"
+    )
+    XCTAssertEqual(
+      LicenseRefreshPolicyError.invalidFailureGracePeriod.errorDescription,
+      "invalid_failure_grace_period"
     )
     XCTAssertEqual(
       LicenseRefreshPolicyError.invalidServerFailureGracePeriod.description,
       "invalid_server_failure_grace_period"
     )
+    XCTAssertEqual(
+      LicenseRefreshPolicyError.invalidServerFailureGracePeriod.errorDescription,
+      "invalid_server_failure_grace_period"
+    )
   }
 
-  func testRejectsInvalidIntervals() {
+  func testInitializerRejectsNegativeAndNonFiniteIntervals() {
     XCTAssertThrowsError(
       try LicenseRefreshPolicy(
         validationInterval: -1,
-        recoverableFailureGracePeriod: 1,
+        failureGracePeriod: 1,
         serverFailureGracePeriod: 1
       )
     ) { error in
@@ -59,17 +80,17 @@ final class LicenseRefreshPolicyTests: XCTestCase {
     XCTAssertThrowsError(
       try LicenseRefreshPolicy(
         validationInterval: 1,
-        recoverableFailureGracePeriod: -1,
+        failureGracePeriod: -1,
         serverFailureGracePeriod: 1
       )
     ) { error in
-      XCTAssertEqual(error as? LicenseRefreshPolicyError, .invalidRecoverableFailureGracePeriod)
+      XCTAssertEqual(error as? LicenseRefreshPolicyError, .invalidFailureGracePeriod)
     }
 
     XCTAssertThrowsError(
       try LicenseRefreshPolicy(
         validationInterval: 1,
-        recoverableFailureGracePeriod: 1,
+        failureGracePeriod: 1,
         serverFailureGracePeriod: -1
       )
     ) { error in
@@ -79,7 +100,7 @@ final class LicenseRefreshPolicyTests: XCTestCase {
     XCTAssertThrowsError(
       try LicenseRefreshPolicy(
         validationInterval: .infinity,
-        recoverableFailureGracePeriod: 1,
+        failureGracePeriod: 1,
         serverFailureGracePeriod: 1
       )
     ) { error in
@@ -89,17 +110,17 @@ final class LicenseRefreshPolicyTests: XCTestCase {
     XCTAssertThrowsError(
       try LicenseRefreshPolicy(
         validationInterval: 1,
-        recoverableFailureGracePeriod: .nan,
+        failureGracePeriod: .nan,
         serverFailureGracePeriod: 1
       )
     ) { error in
-      XCTAssertEqual(error as? LicenseRefreshPolicyError, .invalidRecoverableFailureGracePeriod)
+      XCTAssertEqual(error as? LicenseRefreshPolicyError, .invalidFailureGracePeriod)
     }
 
     XCTAssertThrowsError(
       try LicenseRefreshPolicy(
         validationInterval: 1,
-        recoverableFailureGracePeriod: 1,
+        failureGracePeriod: 1,
         serverFailureGracePeriod: .infinity
       )
     ) { error in

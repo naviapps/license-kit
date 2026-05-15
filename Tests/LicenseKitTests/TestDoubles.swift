@@ -56,16 +56,15 @@ final class TestStateSnapshotStorage: LicenseStateSnapshotStorage, @unchecked Se
   func state(matching activation: LicenseActivation) throws -> LicenseState? {
     guard let snapshot else { return nil }
     guard snapshot.matches(activation: activation) else { return nil }
-    return snapshot.restoreState(activation: activation, offerings: [])
+    return snapshot.restoreState(activation: activation)
   }
 }
 
 final class TestProvider: LicenseProvider, @unchecked Sendable {
-  var activation: LicenseActivation
+  let activation: LicenseActivation
   var validationResult = LicenseValidationResult(
     isValid: true,
-    expiresAt: nil,
-    remainingActivations: nil
+    expiresAt: nil
   )
   var activationError: Error?
   var validationError: Error?
@@ -73,85 +72,43 @@ final class TestProvider: LicenseProvider, @unchecked Sendable {
   var activationDelayNanoseconds: UInt64?
   var validationDelayNanoseconds: UInt64?
   private(set) var deactivationCount = 0
+  private(set) var validationCount = 0
   private(set) var lastActivationLicenseKey: String?
-  private(set) var lastActivationDeviceName: String?
+  private(set) var lastDeactivatedActivation: LicenseActivation?
+  private(set) var lastValidatedActivation: LicenseActivation?
   private(set) var lastValidationIdentifier: String?
 
   init(activation: LicenseActivation) {
     self.activation = activation
   }
 
-  func activate(licenseKey: String, deviceName: String) async throws -> LicenseActivation {
+  func activate(licenseKey: String) async throws -> LicenseActivation {
     lastActivationLicenseKey = licenseKey
-    lastActivationDeviceName = deviceName
     if let activationDelayNanoseconds {
       try await Task.sleep(nanoseconds: activationDelayNanoseconds)
     }
     if let activationError { throw activationError }
-    return LicenseActivation(
-      source: activation.source,
-      licenseKey: activation.licenseKey,
-      planID: activation.planID,
-      customerID: activation.customerID,
-      deviceName: deviceName,
-      activationID: activation.activationID,
-      activatedAt: activation.activatedAt,
-      expiresAt: activation.expiresAt,
-      remainingActivations: activation.remainingActivations
-    )
+    return activation
   }
 
-  func deactivate(_: LicenseActivation) async throws {
+  func deactivate(_ activation: LicenseActivation) async throws {
     deactivationCount += 1
+    lastDeactivatedActivation = activation
     if let deactivationError { throw deactivationError }
   }
 
   func validate(
-    _: LicenseActivation,
+    _ activation: LicenseActivation,
     validationIdentifier: String?
   ) async throws -> LicenseValidationResult {
+    validationCount += 1
+    lastValidatedActivation = activation
     lastValidationIdentifier = validationIdentifier
     if let validationDelayNanoseconds {
       try await Task.sleep(nanoseconds: validationDelayNanoseconds)
     }
     if let validationError { throw validationError }
     return validationResult
-  }
-}
-
-final class TestOfferingProvider: LicenseOfferingProvider, @unchecked Sendable {
-  var offerings: [LicenseOffering]
-  var error: Error?
-
-  init(offerings: [LicenseOffering]) {
-    self.offerings = offerings
-  }
-
-  func offerings(forCatalogID _: String) async throws -> [LicenseOffering] {
-    if let error { throw error }
-    return offerings
-  }
-}
-
-final class TestCustomerPortalProvider: LicenseCustomerPortalProvider, @unchecked Sendable {
-  let url: URL?
-  var error: Error?
-
-  init(url: URL?) {
-    self.url = url
-  }
-
-  func customerPortalURL(forCustomerID _: String) async throws -> URL? {
-    if let error { throw error }
-    return url
-  }
-}
-
-struct TestDeviceIdentifierProvider: LicenseDeviceIdentifierProvider {
-  let identifier: String?
-
-  func deviceIdentifier() -> String? {
-    identifier
   }
 }
 
@@ -167,22 +124,17 @@ func makeActivation(
   source: LicenseSource = .default,
   licenseKey: String? = "KEY",
   planID: String = "pro",
-  customerID: String? = "customer",
   activationID: String? = "instance",
   activatedAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
-  expiresAt: Date? = nil,
-  remainingActivations: Int? = 1
+  expiresAt: Date? = nil
 ) -> LicenseActivation {
   LicenseActivation(
     source: source,
     licenseKey: licenseKey,
     planID: planID,
-    customerID: customerID,
-    deviceName: "Mac",
     activationID: activationID,
     activatedAt: activatedAt,
-    expiresAt: expiresAt,
-    remainingActivations: remainingActivations
+    expiresAt: expiresAt
   )
 }
 
@@ -197,7 +149,6 @@ func makeState(
     plan: LicensePlan.resolve(activation: activation),
     activation: activation,
     isRefreshing: false,
-    offerings: [],
     lastValidatedAt: lastValidatedAt,
     status: status,
     gracePeriodExpiresAt: gracePeriodExpiresAt,

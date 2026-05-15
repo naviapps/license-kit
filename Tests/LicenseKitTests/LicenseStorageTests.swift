@@ -23,6 +23,7 @@ final class LicenseStorageTests: XCTestCase {
     XCTAssertEqual(try storage.load(), updatedActivation)
 
     try storage.delete()
+    try storage.delete()
     XCTAssertNil(try storage.load())
   }
 
@@ -46,8 +47,29 @@ final class LicenseStorageTests: XCTestCase {
     XCTAssertEqual(SecItemAdd(query as CFDictionary, nil), errSecSuccess)
 
     XCTAssertThrowsError(try storage.load()) { error in
-      XCTAssertEqual(error as? LicenseError, .storageFailure)
+      guard case .storageFailure(let message) = error as? LicenseError else {
+        return XCTFail("Expected storage failure.")
+      }
+      XCTAssertFalse(message.isEmpty)
     }
+  }
+
+  func testKeychainActivationStorageAcceptsConfiguredAccessibility() throws {
+    let service = "LicenseKitTests.\(UUID().uuidString)"
+    let account = "license"
+    let storage = KeychainLicenseActivationStorage(
+      service: service,
+      account: account,
+      accessibility: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    )
+    defer { try? storage.delete() }
+
+    try storage.delete()
+    let activation = makeActivation(source: "custom-accessibility")
+
+    try storage.save(activation)
+
+    XCTAssertEqual(try storage.load(), activation)
   }
 
   func testUserDefaultsStateStorageRoundTripOverwriteAndDelete() throws {
@@ -60,7 +82,7 @@ final class LicenseStorageTests: XCTestCase {
     )
     let activation = makeActivation()
     let failure = LicenseRefreshFailure(
-      reason: .networkFailure,
+      reason: .transportFailure,
       message: "offline",
       occurredAt: Date(timeIntervalSince1970: 1_700_000_100)
     )
@@ -68,18 +90,17 @@ final class LicenseStorageTests: XCTestCase {
       plan: LicensePlan(id: "pro", isLicensed: true, expiresAt: nil),
       activation: activation,
       isRefreshing: false,
-      offerings: [],
       lastValidatedAt: Date(timeIntervalSince1970: 1_700_000_000),
       status: .gracePeriod,
       gracePeriodExpiresAt: Date(timeIntervalSince1970: 1_700_086_400),
       lastRefreshFailure: failure
     )
     let snapshot = try XCTUnwrap(LicenseStateSnapshot(state: state))
+    let updatedActivation = makeActivation(planID: "team")
     let updatedState = LicenseState(
       plan: LicensePlan(id: "team", isLicensed: true, expiresAt: nil),
-      activation: activation,
+      activation: updatedActivation,
       isRefreshing: false,
-      offerings: [],
       lastValidatedAt: Date(timeIntervalSince1970: 1_700_000_200),
       status: .active,
       gracePeriodExpiresAt: nil,
@@ -91,15 +112,16 @@ final class LicenseStorageTests: XCTestCase {
 
     try storage.save(snapshot)
     let loadedSnapshot = try XCTUnwrap(try storage.load())
-    XCTAssertEqual(loadedSnapshot.restoreState(activation: activation, offerings: []), state)
+    XCTAssertEqual(loadedSnapshot.restoreState(activation: activation), state)
 
     try storage.save(updatedSnapshot)
     let loadedUpdatedSnapshot = try XCTUnwrap(try storage.load())
     XCTAssertEqual(
-      loadedUpdatedSnapshot.restoreState(activation: activation, offerings: []),
+      loadedUpdatedSnapshot.restoreState(activation: updatedActivation),
       updatedState
     )
 
+    try storage.delete()
     try storage.delete()
     XCTAssertNil(try storage.load())
   }
@@ -115,7 +137,10 @@ final class LicenseStorageTests: XCTestCase {
     defaults.set(Data("not json".utf8), forKey: "snapshot")
 
     XCTAssertThrowsError(try storage.load()) { error in
-      XCTAssertEqual(error as? LicenseError, .storageFailure)
+      guard case .storageFailure(let message) = error as? LicenseError else {
+        return XCTFail("Expected storage failure.")
+      }
+      XCTAssertFalse(message.isEmpty)
     }
   }
 }
