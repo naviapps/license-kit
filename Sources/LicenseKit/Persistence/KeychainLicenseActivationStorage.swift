@@ -1,6 +1,10 @@
 import Foundation
 import Security
 
+/// ``LicenseActivationStorage`` backed by the system Keychain.
+///
+/// Use this storage for the authoritative activation record in production apps.
+/// The activation is encoded as JSON and stored as a generic password item.
 public final class KeychainLicenseActivationStorage: @unchecked Sendable,
   LicenseActivationStorage
 {
@@ -8,9 +12,16 @@ public final class KeychainLicenseActivationStorage: @unchecked Sendable,
   private let account: String
   private let accessibility: CFString
 
+  /// Creates Keychain-backed activation storage.
+  ///
+  /// - Parameters:
+  ///   - service: The Keychain service used to identify the activation item.
+  ///   - account: The Keychain account used to identify the activation item.
+  ///   - accessibility: The Keychain accessibility class applied when saving.
   public init(
     service: String,
-    account: String
+    account: String,
+    accessibility: CFString = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
   ) {
     let normalizedService = service.trimmingCharacters(in: .whitespacesAndNewlines)
     let normalizedAccount = account.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -25,15 +36,16 @@ public final class KeychainLicenseActivationStorage: @unchecked Sendable,
 
     self.service = normalizedService
     self.account = normalizedAccount
-    accessibility = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    self.accessibility = accessibility
   }
 
+  /// Persists the current activation.
   public func save(_ activation: LicenseActivation) throws {
     let data: Data
     do {
       data = try JSONEncoder().encode(activation)
     } catch {
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
 
     var query = baseQuery()
@@ -49,13 +61,18 @@ public final class KeychainLicenseActivationStorage: @unchecked Sendable,
           kSecAttrAccessible as String: accessibility,
         ] as CFDictionary
       )
-      guard updateStatus == errSecSuccess else { throw LicenseError.storageFailure }
+      guard updateStatus == errSecSuccess else {
+        throw keychainStorageFailure(operation: "update", status: updateStatus)
+      }
       return
     }
 
-    guard status == errSecSuccess else { throw LicenseError.storageFailure }
+    guard status == errSecSuccess else {
+      throw keychainStorageFailure(operation: "save", status: status)
+    }
   }
 
+  /// Loads the persisted activation, if one exists.
   public func load() throws -> LicenseActivation? {
     var query = baseQuery()
     query[kSecReturnData as String] = kCFBooleanTrue
@@ -65,20 +82,21 @@ public final class KeychainLicenseActivationStorage: @unchecked Sendable,
     let status = SecItemCopyMatching(query as CFDictionary, &item)
     if status == errSecItemNotFound { return nil }
     guard status == errSecSuccess, let data = item as? Data else {
-      throw LicenseError.storageFailure
+      throw keychainStorageFailure(operation: "load", status: status)
     }
 
     do {
       return try JSONDecoder().decode(LicenseActivation.self, from: data)
     } catch {
-      throw LicenseError.storageFailure
+      throw LicenseError.storageFailure(error)
     }
   }
 
+  /// Deletes the persisted activation if one exists.
   public func delete() throws {
     let status = SecItemDelete(baseQuery() as CFDictionary)
     guard status == errSecSuccess || status == errSecItemNotFound else {
-      throw LicenseError.storageFailure
+      throw keychainStorageFailure(operation: "delete", status: status)
     }
   }
 
@@ -88,5 +106,9 @@ public final class KeychainLicenseActivationStorage: @unchecked Sendable,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
     ]
+  }
+
+  private func keychainStorageFailure(operation: String, status: OSStatus) -> LicenseError {
+    .storageFailure(message: "Keychain \(operation) failed with status \(status).")
   }
 }

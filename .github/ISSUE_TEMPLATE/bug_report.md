@@ -11,14 +11,14 @@ assignees: ""
 Describe the issue in one or two sentences.
 
 Do not include vulnerability details, secrets, tokens, license keys, personal
-data, customer identifiers, activation identifiers, or private logs in public
+data, account identifiers, activation identifiers, or private logs in public
 issues. Follow `SECURITY.md` for security reports.
 
 ## Environment
 
 - LicenseKit version or commit:
 - Installation method: Swift Package Manager / other
-- macOS version:
+- Platform and OS version:
 - Swift version:
 - Xcode version, if applicable:
 - Sandboxed app: yes/no

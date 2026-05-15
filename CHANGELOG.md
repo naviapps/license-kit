@@ -4,6 +4,15 @@ All notable changes to LicenseKit will be documented in this file.
 
 This project follows semantic versioning.
 
+## Unreleased
+
+### Changed
+
+- Simplified the core package around license state, activation, validation,
+  refresh, and persistence.
+- Clarified that commerce, offering, customer portal, configuration, and billing
+  account identity belong in provider packages or application code.
+
 ## [1.0.0] - 2026-05-14
 
 ### Changed

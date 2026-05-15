@@ -1,11 +1,23 @@
 import Foundation
 
+/// A provider-neutral plan attached to the current license state.
 public struct LicensePlan: Codable, Equatable, Sendable {
+  /// The normalized plan identifier.
   public let id: String
+
+  /// Whether this value represents a licensed plan.
   public let isLicensed: Bool
+
+  /// The time this plan stops being locally usable, if it expires.
   public let expiresAt: Date?
 
-  public static let unlicensed = LicensePlan(id: "unlicensed", isLicensed: false, expiresAt: nil)
+  /// The canonical unlicensed plan.
+  public static let unlicensed = LicensePlan(
+    id: unlicensedID,
+    isLicensed: false
+  )
+
+  private static let unlicensedID = "unlicensed"
 
   private enum CodingKeys: String, CodingKey {
     case id
@@ -13,13 +25,19 @@ public struct LicensePlan: Codable, Equatable, Sendable {
     case expiresAt
   }
 
-  public init(id: String, isLicensed: Bool, expiresAt: Date?) {
+  public init(id: String, isLicensed: Bool, expiresAt: Date? = nil) {
     let normalizedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
     precondition(normalizedID.isEmpty == false, "LicensePlan id must not be empty.")
 
-    self.id = normalizedID
-    self.isLicensed = isLicensed
-    self.expiresAt = expiresAt
+    if isLicensed {
+      self.id = normalizedID
+      self.isLicensed = true
+      self.expiresAt = expiresAt
+    } else {
+      self.id = Self.unlicensedID
+      self.isLicensed = false
+      self.expiresAt = nil
+    }
   }
 
   public init(from decoder: Decoder) throws {
@@ -40,10 +58,12 @@ public struct LicensePlan: Codable, Equatable, Sendable {
     )
   }
 
+  /// Returns whether the plan is expired at the current time.
   public var isExpired: Bool {
     isExpired(at: Date())
   }
 
+  /// Returns whether the plan is expired at `date`.
   public func isExpired(at date: Date) -> Bool {
     guard let expiresAt else { return false }
     return expiresAt <= date

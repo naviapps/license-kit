@@ -1,57 +1,51 @@
 import Foundation
 
+/// A provider-resolved license activation that LicenseKit can persist and refresh.
 public struct LicenseActivation: Codable, Sendable, Equatable {
+  /// The provider-neutral source that supplied this activation.
   public let source: LicenseSource
+
+  /// The normalized license key, when the provider or app wants LicenseKit to persist it.
   public let licenseKey: String?
+
+  /// The normalized active plan identifier.
   public let planID: String
-  public let customerID: String?
-  public let deviceName: String?
+
+  /// The provider activation identifier used as the preferred validation identifier.
   public let activationID: String?
+
+  /// The time this activation was created or accepted by the provider.
   public let activatedAt: Date
+
+  /// The time this activation stops being locally usable, if it expires.
   public let expiresAt: Date?
-  public let remainingActivations: Int?
 
   private enum CodingKeys: String, CodingKey {
     case source
     case licenseKey
     case planID
-    case customerID
-    case deviceName
     case activationID
     case activatedAt
     case expiresAt
-    case remainingActivations
   }
 
   public init(
     source: LicenseSource = .default,
     licenseKey: String? = nil,
     planID: String,
-    customerID: String? = nil,
-    deviceName: String? = nil,
     activationID: String? = nil,
     activatedAt: Date = Date(),
-    expiresAt: Date? = nil,
-    remainingActivations: Int? = nil
+    expiresAt: Date? = nil
   ) {
     let normalizedPlanID = planID.trimmingCharacters(in: .whitespacesAndNewlines)
     precondition(normalizedPlanID.isEmpty == false, "LicenseActivation planID must not be empty.")
-    if let remainingActivations {
-      precondition(
-        remainingActivations >= 0,
-        "LicenseActivation remainingActivations must not be negative."
-      )
-    }
 
     self.source = source
     self.licenseKey = licenseKey?.licenseKitTrimmedNonEmpty
     self.planID = normalizedPlanID
-    self.customerID = customerID?.licenseKitTrimmedNonEmpty
-    self.deviceName = deviceName?.licenseKitTrimmedNonEmpty
     self.activationID = activationID?.licenseKitTrimmedNonEmpty
     self.activatedAt = activatedAt
     self.expiresAt = expiresAt
-    self.remainingActivations = remainingActivations
   }
 
   public init(from decoder: Decoder) throws {
@@ -65,28 +59,24 @@ public struct LicenseActivation: Codable, Sendable, Equatable {
       )
     }
 
-    let remainingActivations = try container.decodeIfPresent(
-      Int.self,
-      forKey: .remainingActivations
-    )
-    if let remainingActivations, remainingActivations < 0 {
-      throw DecodingError.dataCorruptedError(
-        forKey: .remainingActivations,
-        in: container,
-        debugDescription: "LicenseActivation remainingActivations must not be negative."
-      )
-    }
-
     self.init(
       source: try container.decodeIfPresent(LicenseSource.self, forKey: .source) ?? .default,
       licenseKey: try container.decodeIfPresent(String.self, forKey: .licenseKey),
       planID: normalizedPlanID,
-      customerID: try container.decodeIfPresent(String.self, forKey: .customerID),
-      deviceName: try container.decodeIfPresent(String.self, forKey: .deviceName),
       activationID: try container.decodeIfPresent(String.self, forKey: .activationID),
       activatedAt: try container.decode(Date.self, forKey: .activatedAt),
-      expiresAt: try container.decodeIfPresent(Date.self, forKey: .expiresAt),
-      remainingActivations: remainingActivations
+      expiresAt: try container.decodeIfPresent(Date.self, forKey: .expiresAt)
     )
+  }
+
+  /// Returns whether the activation is expired at the current time.
+  public var isExpired: Bool {
+    isExpired(at: Date())
+  }
+
+  /// Returns whether the activation is expired at `date`.
+  public func isExpired(at date: Date) -> Bool {
+    guard let expiresAt else { return false }
+    return expiresAt <= date
   }
 }

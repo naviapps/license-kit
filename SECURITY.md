@@ -13,8 +13,8 @@ credential exposure, license-key exposure, or privacy-sensitive behavior.
 
 If private vulnerability reporting is not enabled, open a public issue asking
 for a private security contact channel, but do not include vulnerability
-details, exploit steps, logs, secrets, tokens, license keys, customer
-identifiers, activation identifiers, or personal data.
+details, exploit steps, logs, secrets, tokens, license keys, private account
+data, activation identifiers, or personal data.
 
 When reporting an issue, include:
 
@@ -32,9 +32,7 @@ Security-sensitive areas include:
 
 - Activation persistence and persisted state
 - License validation and refresh grace handling
-- Customer portal URL resolution
-- Provider integrations that handle license keys, customer identifiers, or
-  activation identifiers
+- Provider-facing APIs that pass license keys or activation identifiers
 
 LicenseKit does not send license data over the network or collect analytics by
 itself. Host applications choose the storage implementation and are responsible
