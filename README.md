@@ -19,7 +19,7 @@ and persistence without coupling app code to a specific license provider.
 Add LicenseKit as a Swift Package dependency:
 
 ```swift
-.package(url: "https://github.com/naviapps/license-kit.git", from: "1.0.0")
+.package(url: "https://github.com/naviapps/license-kit.git", from: "1.1.0")
 ```
 
 Then add the product to the target that needs licensing support:
