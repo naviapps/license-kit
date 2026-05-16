@@ -15,9 +15,9 @@ flows, provider SDKs, UI, or provider-specific display logic.
 
 ## Creating a Manager
 
-Implement ``LicenseProvider`` for your backend, create one ``LicenseManager``
-with secure activation storage, then call
-``LicenseManager/activate(licenseKey:)``, ``LicenseManager/refresh()``, and
+Implement ``LicenseProvider`` for your backend or entitlement source, create one
+``LicenseManager`` with secure activation storage, then call
+``LicenseManager/activate(_:)``, ``LicenseManager/refresh()``, and
 ``LicenseManager/deactivate()`` from the app layer.
 
 Create a manager with an explicit provider and secure activation storage. The
@@ -41,7 +41,7 @@ normalizes impossible combinations such as licensed statuses without an
 activation, expired local values, or grace-period state without an expiration.
 
 ```swift
-try await manager.activate(licenseKey: enteredLicenseKey)
+try await manager.activate(.licenseKey(enteredLicenseKey))
 
 if manager.needsRefresh() {
   let result = try await manager.refresh()
@@ -86,12 +86,14 @@ results clear the activation. Deactivation clears persisted activation state.
 
 ## Provider Contract
 
-``LicenseProvider/activate(licenseKey:)`` returns a non-expired
-``LicenseActivation`` or throws ``LicenseProviderError``. Validation returns
-``LicenseValidationResult`` for completed checks and throws provider errors only
-when validation could not be completed, allowing ``LicenseManager`` to apply
-grace-period handling. Expired activations become expired without entering the
-grace period.
+``LicenseProvider/activate(_:)`` receives a ``LicenseActivationRequest`` and
+returns a non-expired ``LicenseActivation`` or throws ``LicenseProviderError``.
+Use ``LicenseActivationRequest/licenseKey(_:)`` for user-entered keys and
+``LicenseActivationRequest/automatic`` for local or runtime entitlements that do
+not have a license key. Validation returns ``LicenseValidationResult`` for
+completed checks and throws provider errors only when validation could not be
+completed, allowing ``LicenseManager`` to apply grace-period handling. Expired
+activations become expired without entering the grace period.
 
 During validation, the provider receives the full ``LicenseActivation``.
 ``LicenseManager`` also supplies a validation identifier using
@@ -143,6 +145,7 @@ licensed and removed from persistence when possible.
 ### Values
 
 - ``LicenseActivation``
+- ``LicenseActivationRequest``
 - ``LicenseSource``
 - ``LicensePlan``
 - ``LicenseValidationResult``

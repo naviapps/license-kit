@@ -72,8 +72,10 @@ final class TestProvider: LicenseProvider, @unchecked Sendable {
   var deactivationError: Error?
   var activationDelayNanoseconds: UInt64?
   var validationDelayNanoseconds: UInt64?
+  private(set) var activationCount = 0
   private(set) var deactivationCount = 0
   private(set) var validationCount = 0
+  private(set) var lastActivationRequest: LicenseActivationRequest?
   private(set) var lastActivationLicenseKey: String?
   private(set) var lastDeactivatedActivation: LicenseActivation?
   private(set) var lastValidatedActivation: LicenseActivation?
@@ -83,8 +85,14 @@ final class TestProvider: LicenseProvider, @unchecked Sendable {
     self.activation = activation
   }
 
-  func activate(licenseKey: String) async throws -> LicenseActivation {
-    lastActivationLicenseKey = licenseKey
+  func activate(_ request: LicenseActivationRequest) async throws -> LicenseActivation {
+    activationCount += 1
+    lastActivationRequest = request
+    if case .licenseKey(let licenseKey) = request {
+      lastActivationLicenseKey = licenseKey
+    } else {
+      lastActivationLicenseKey = nil
+    }
     if let activationDelayNanoseconds {
       try await Task.sleep(nanoseconds: activationDelayNanoseconds)
     }

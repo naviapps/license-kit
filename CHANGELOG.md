@@ -4,6 +4,20 @@ All notable changes to LicenseKit will be documented in this file.
 
 This project follows semantic versioning.
 
+## [1.2.0] - 2026-05-17
+
+### Added
+
+- Added `LicenseActivationRequest` so providers can support both license-key
+  activation and keyless local or runtime entitlement activation.
+- Documented official provider packages for Lemon Squeezy and Setapp.
+
+### Changed
+
+- Replaced `activate(licenseKey:)` with `activate(_:)` on `LicenseManager` and
+  `LicenseProvider`.
+- Clarified README and DocC guidance for provider-neutral entitlement sources.
+
 ## [1.1.0] - 2026-05-16
 
 ### Changed

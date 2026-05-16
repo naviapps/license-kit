@@ -2,8 +2,8 @@ import Foundation
 
 /// A provider-neutral contract for activating, validating, and deactivating licenses.
 public protocol LicenseProvider: Sendable {
-  /// Activates a normalized license key and returns the provider-resolved activation.
-  func activate(licenseKey: String) async throws -> LicenseActivation
+  /// Activates a license from a provider-neutral request and returns the resolved activation.
+  func activate(_ request: LicenseActivationRequest) async throws -> LicenseActivation
 
   /// Deactivates the current activation with the provider.
   func deactivate(_ activation: LicenseActivation) async throws
@@ -92,9 +92,7 @@ public struct UnavailableLicenseProvider: LicenseProvider, Sendable {
   }
 
   /// Always throws ``LicenseProviderError/requestFailure(message:)``.
-  public func activate(
-    licenseKey _: String
-  ) async throws -> LicenseActivation {
+  public func activate(_: LicenseActivationRequest) async throws -> LicenseActivation {
     throw LicenseProviderError.requestFailure(message: message)
   }
 

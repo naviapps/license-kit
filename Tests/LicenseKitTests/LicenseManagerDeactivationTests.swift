@@ -13,7 +13,7 @@ final class LicenseManagerDeactivationTests: XCTestCase {
       activationStorage: TestActivationStorage()
     )
 
-    async let activationState: LicenseState = manager.activate(licenseKey: "KEY")
+    async let activationState: LicenseState = manager.activate(.licenseKey("KEY"))
     try await waitForManagerState { manager.isActivating }
 
     do {
@@ -118,6 +118,7 @@ final class LicenseManagerDeactivationTests: XCTestCase {
       XCTAssertEqual(manager.status, .active)
       XCTAssertEqual(manager.activation, activation)
       XCTAssertEqual(provider.deactivationCount, 1)
+      XCTAssertEqual(provider.lastDeactivatedActivation, activation)
       XCTAssertEqual(activationStorage.activation, activation)
       XCTAssertNotNil(stateSnapshotStorage.snapshot)
     }

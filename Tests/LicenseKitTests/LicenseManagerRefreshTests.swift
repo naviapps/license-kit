@@ -122,7 +122,7 @@ final class LicenseManagerRefreshTests: XCTestCase {
       activationStorage: TestActivationStorage()
     )
 
-    async let activationState: LicenseState = manager.activate(licenseKey: "KEY")
+    async let activationState: LicenseState = manager.activate(.licenseKey("KEY"))
     try await waitForManagerState { manager.isActivating }
 
     let result = try await manager.refresh()
@@ -182,6 +182,20 @@ final class LicenseManagerRefreshTests: XCTestCase {
     let manager = LicenseManager(
       provider: provider,
       activationStorage: TestActivationStorage(activation: activation)
+    )
+
+    _ = try await manager.refresh()
+
+    XCTAssertNil(provider.lastValidationIdentifier)
+  }
+
+  func testRefreshPassesNilWhenConfiguredValidationIdentifierIsBlank() async throws {
+    let activation = makeActivation(activationID: nil)
+    let provider = TestProvider(activation: activation)
+    let manager = LicenseManager(
+      provider: provider,
+      activationStorage: TestActivationStorage(activation: activation),
+      validationIdentifierProvider: { " \n\t " }
     )
 
     _ = try await manager.refresh()

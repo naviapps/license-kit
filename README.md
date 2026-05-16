@@ -19,7 +19,7 @@ and persistence without coupling app code to a specific license provider.
 Add LicenseKit as a Swift Package dependency:
 
 ```swift
-.package(url: "https://github.com/naviapps/license-kit.git", from: "1.1.0")
+.package(url: "https://github.com/naviapps/license-kit.git", from: "1.2.0")
 ```
 
 Then add the product to the target that needs licensing support:
@@ -32,14 +32,32 @@ Then add the product to the target that needs licensing support:
 
 - [LicenseKit API reference](https://swiftpackageindex.com/naviapps/license-kit/documentation/licensekit)
 
+## Provider Packages
+
+LicenseKit is provider-neutral. Provider packages can implement
+`LicenseProvider` for specific licensing services while keeping the core package
+focused on license state management.
+
+### Official
+
+- [LicenseKitLemonSqueezy](https://github.com/naviapps/license-kit-lemon-squeezy)
+  for Lemon Squeezy license keys.
+- [LicenseKitSetapp](https://github.com/naviapps/license-kit-setapp)
+  for Setapp entitlements.
+
+### Community
+
+Community provider packages are welcome. Open a pull request to list one.
+
 ## Quick Start
 
 The minimal integration has three steps:
 
-1. Implement `LicenseProvider` for your backend.
+1. Implement `LicenseProvider` for your backend or entitlement source.
 2. Create one `LicenseManager` with secure activation storage.
-3. Call `activate(licenseKey:)` when the user enters a key, `refresh()` when the
-   app starts or resumes, and `deactivate()` when the user removes the license.
+3. Call `activate(_:)` with a license-key or automatic activation request,
+   `refresh()` when the app starts or resumes, and `deactivate()` when the user
+   removes the license.
 
 Implement `LicenseProvider` for your licensing backend. In this example,
 `MyLicenseAPI` is your app's backend client:
@@ -51,7 +69,11 @@ import LicenseKit
 struct MyLicenseProvider: LicenseProvider {
   let licenseAPI: MyLicenseAPI
 
-  func activate(licenseKey: String) async throws -> LicenseActivation {
+  func activate(_ request: LicenseActivationRequest) async throws -> LicenseActivation {
+    guard case .licenseKey(let licenseKey) = request else {
+      throw LicenseProviderError.requestFailure(message: "License key is required.")
+    }
+
     let response = try await licenseAPI.activate(licenseKey: licenseKey)
     return LicenseActivation(
       source: "backend",
@@ -103,7 +125,7 @@ let manager = LicenseManager(
 Use the manager from the app layer:
 
 ```swift
-try await manager.activate(licenseKey: enteredLicenseKey)
+try await manager.activate(.licenseKey(enteredLicenseKey))
 
 if manager.needsRefresh() {
   let refreshResult = try await manager.refresh()
@@ -120,6 +142,9 @@ if manager.needsRefresh() {
   }
 }
 ```
+
+Providers for local or runtime entitlements can call
+`manager.activate(.automatic)` instead of passing a license key.
 
 Mutating operations return the updated `LicenseState`. `refresh()` returns
 `LicenseRefreshResult`, which separates successful validation, grace-period
@@ -193,6 +218,8 @@ LicenseKit value types.
 The key rule is to separate definitive license decisions from temporary provider
 failures:
 
+- Use `.licenseKey(...)` for user-entered keys and `.automatic` for local or
+  runtime entitlements that do not have a license key.
 - Return `LicenseValidationResult(isValid: false)` only when the activation is
   definitively invalid.
 - Throw `LicenseProviderError` when activation or validation could not be

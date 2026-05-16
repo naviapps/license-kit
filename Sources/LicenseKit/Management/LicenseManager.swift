@@ -96,9 +96,9 @@ public final class LicenseManager: ObservableObject {
     self.state = store.state
   }
 
-  /// Activates a license key through the configured provider and persists the resolved activation.
+  /// Activates a license through the configured provider and persists the resolved activation.
   @discardableResult
-  public func activate(licenseKey: String) async throws -> LicenseState {
+  public func activate(_ request: LicenseActivationRequest) async throws -> LicenseState {
     guard store.isActivating == false else {
       throw LicenseError.activationInProgress
     }
@@ -106,17 +106,14 @@ public final class LicenseManager: ObservableObject {
       throw LicenseError.refreshInProgress
     }
 
-    let normalizedKey = LicenseKeyNormalizer.normalize(licenseKey)
-    guard normalizedKey.isEmpty == false else {
-      throw LicenseError.invalidLicenseKey
-    }
+    let (normalizedRequest, normalizedLicenseKey) = try normalizedActivationRequest(request)
 
     let previousStore = store
     store.setActivating()
 
     let activation: LicenseActivation
     do {
-      activation = try await provider.activate(licenseKey: normalizedKey)
+      activation = try await provider.activate(normalizedRequest)
     } catch let error as LicenseProviderError {
       restoreAfterActivationFailure(previousStore)
       throw mapProviderError(error)
@@ -130,7 +127,7 @@ public final class LicenseManager: ObservableObject {
 
     let resolvedActivation = activationFillingMissingLicenseKey(
       activation,
-      licenseKey: normalizedKey
+      normalizedLicenseKey: normalizedLicenseKey
     )
     guard resolvedActivation.isExpired == false else {
       restoreAfterActivationFailure(previousStore)
@@ -300,17 +297,33 @@ public final class LicenseManager: ObservableObject {
 
   private func activationFillingMissingLicenseKey(
     _ activation: LicenseActivation,
-    licenseKey: String
+    normalizedLicenseKey: String?
   ) -> LicenseActivation {
+    guard let normalizedLicenseKey else { return activation }
     guard activation.licenseKey == nil else { return activation }
     return LicenseActivation(
       source: activation.source,
-      licenseKey: licenseKey,
+      licenseKey: normalizedLicenseKey,
       planID: activation.planID,
       activationID: activation.activationID,
       activatedAt: activation.activatedAt,
       expiresAt: activation.expiresAt
     )
+  }
+
+  private func normalizedActivationRequest(
+    _ request: LicenseActivationRequest
+  ) throws -> (request: LicenseActivationRequest, normalizedLicenseKey: String?) {
+    switch request {
+    case .automatic:
+      return (.automatic, nil)
+    case .licenseKey(let licenseKey):
+      let normalizedLicenseKey = LicenseKeyNormalizer.normalize(licenseKey)
+      guard normalizedLicenseKey.isEmpty == false else {
+        throw LicenseError.invalidLicenseKey
+      }
+      return (.licenseKey(normalizedLicenseKey), normalizedLicenseKey)
+    }
   }
 
   private func restoreAfterActivationFailure(_ previousStore: LicenseStateStore) {

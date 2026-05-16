@@ -15,9 +15,11 @@ final class LicenseManagerActivationTests: XCTestCase {
       stateSnapshotStorage: stateSnapshotStorage
     )
 
-    let state = try await manager.activate(licenseKey: " KEY ")
+    let state = try await manager.activate(.licenseKey(" KEY "))
 
+    XCTAssertEqual(provider.lastActivationRequest, .licenseKey("KEY"))
     XCTAssertEqual(provider.lastActivationLicenseKey, "KEY")
+    XCTAssertEqual(provider.activationCount, 1)
     XCTAssertEqual(state.plan.id, "pro")
     XCTAssertEqual(state.status, .active)
     XCTAssertEqual(manager.plan.id, "pro")
@@ -35,14 +37,37 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: " \n\t ")
+      try await manager.activate(.licenseKey(" \n\t "))
       XCTFail("Expected invalidLicenseKey")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .invalidLicenseKey)
       XCTAssertEqual(manager.status, .unlicensed)
     }
+    XCTAssertEqual(provider.activationCount, 0)
+    XCTAssertNil(provider.lastActivationRequest)
     XCTAssertNil(provider.lastActivationLicenseKey)
     XCTAssertNil(activationStorage.activation)
+  }
+
+  func testActivateWithAutomaticRequestPersistsKeylessActivation() async throws {
+    let activation = makeActivation(source: "runtime-entitlement", licenseKey: nil, planID: "pro")
+    let provider = TestProvider(activation: activation)
+    let activationStorage = TestActivationStorage()
+    let manager = LicenseManager(
+      provider: provider,
+      activationStorage: activationStorage
+    )
+
+    let state = try await manager.activate(.automatic)
+
+    XCTAssertEqual(provider.lastActivationRequest, .automatic)
+    XCTAssertNil(provider.lastActivationLicenseKey)
+    XCTAssertEqual(provider.activationCount, 1)
+    XCTAssertEqual(state.activation?.source, LicenseSource(rawValue: "runtime-entitlement"))
+    XCTAssertNil(state.activation?.licenseKey)
+    XCTAssertEqual(state.plan.id, "pro")
+    XCTAssertEqual(state.status, .active)
+    XCTAssertEqual(activationStorage.activation, activation)
   }
 
   func testApplyActivationPersistsResolvedActivationAndSnapshot() throws {
@@ -68,6 +93,8 @@ final class LicenseManagerActivationTests: XCTestCase {
     XCTAssertNil(state.activation?.licenseKey)
     XCTAssertEqual(state.plan.id, "external")
     XCTAssertEqual(activationStorage.activation, activation)
+    XCTAssertEqual(provider.activationCount, 0)
+    XCTAssertNil(provider.lastActivationRequest)
     XCTAssertNil(provider.lastActivationLicenseKey)
     XCTAssertEqual(
       try stateSnapshotStorage.state(matching: activation)?.activation?.source,
@@ -140,7 +167,7 @@ final class LicenseManagerActivationTests: XCTestCase {
       activationStorage: TestActivationStorage()
     )
 
-    async let first: LicenseState = manager.activate(licenseKey: "KEY")
+    async let first: LicenseState = manager.activate(.licenseKey("KEY"))
     try await waitForManagerState { manager.isActivating }
 
     XCTAssertThrowsError(try manager.applyActivation(activation)) { error in
@@ -148,6 +175,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     }
 
     _ = try await first
+    XCTAssertEqual(provider.activationCount, 1)
   }
 
   func testApplyActivationRejectsConcurrentRefresh() async throws {
@@ -177,7 +205,7 @@ final class LicenseManagerActivationTests: XCTestCase {
       activationStorage: activationStorage
     )
 
-    let state = try await manager.activate(licenseKey: " KEY ")
+    let state = try await manager.activate(.licenseKey(" KEY "))
 
     XCTAssertEqual(state.activation?.source, LicenseSource(rawValue: "source-a"))
     XCTAssertEqual(state.activation?.licenseKey, "KEY")
@@ -197,7 +225,7 @@ final class LicenseManagerActivationTests: XCTestCase {
       activationStorage: activationStorage
     )
 
-    let state = try await manager.activate(licenseKey: " USER-KEY ")
+    let state = try await manager.activate(.licenseKey(" USER-KEY "))
 
     XCTAssertEqual(provider.lastActivationLicenseKey, "USER-KEY")
     XCTAssertEqual(state.activation?.licenseKey, "PROVIDER-KEY")
@@ -219,7 +247,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: "NEW-KEY")
+      try await manager.activate(.licenseKey("NEW-KEY"))
       XCTFail("Expected expiredLicense")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .expiredLicense)
@@ -250,7 +278,7 @@ final class LicenseManagerActivationTests: XCTestCase {
       )
 
       do {
-        try await manager.activate(licenseKey: "KEY")
+        try await manager.activate(.licenseKey("KEY"))
         XCTFail("Expected \(expectedError)")
       } catch let error as LicenseError {
         XCTAssertEqual(error, expectedError)
@@ -269,7 +297,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: "KEY")
+      try await manager.activate(.licenseKey("KEY"))
       XCTFail("Expected storage failure")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .storageFailure(message: "Storage operation failed."))
@@ -289,7 +317,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: "KEY")
+      try await manager.activate(.licenseKey("KEY"))
       XCTFail("Expected storage failure")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .storageFailure(message: "defaults unavailable"))
@@ -309,7 +337,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: "NEW-KEY")
+      try await manager.activate(.licenseKey("NEW-KEY"))
       XCTFail("Expected provider failure")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .requestFailure(message: "offline"))
@@ -329,7 +357,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: "NEW-KEY")
+      try await manager.activate(.licenseKey("NEW-KEY"))
       XCTFail("Expected storage failure")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .storageFailure(message: "Storage operation failed."))
@@ -349,7 +377,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: "KEY")
+      try await manager.activate(.licenseKey("KEY"))
       XCTFail("Expected provider failure")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .requestFailure(message: "boom"))
@@ -367,7 +395,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: "KEY")
+      try await manager.activate(.licenseKey("KEY"))
       XCTFail("Expected license failure")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .invalidLicense)
@@ -386,7 +414,7 @@ final class LicenseManagerActivationTests: XCTestCase {
     )
 
     do {
-      try await manager.activate(licenseKey: "NEW-KEY")
+      try await manager.activate(.licenseKey("NEW-KEY"))
       XCTFail("Expected license failure")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .invalidLicense)
@@ -405,17 +433,18 @@ final class LicenseManagerActivationTests: XCTestCase {
       activationStorage: TestActivationStorage()
     )
 
-    async let first: LicenseState = manager.activate(licenseKey: "KEY")
+    async let first: LicenseState = manager.activate(.licenseKey("KEY"))
     try await waitForManagerState { manager.isActivating }
 
     do {
-      try await manager.activate(licenseKey: "KEY")
+      try await manager.activate(.licenseKey("KEY"))
       XCTFail("Expected activationInProgress")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .activationInProgress)
     }
 
     _ = try await first
+    XCTAssertEqual(provider.activationCount, 1)
   }
 
   func testActivateRejectsConcurrentRefresh() async throws {
@@ -431,12 +460,13 @@ final class LicenseManagerActivationTests: XCTestCase {
     try await waitForManagerState { manager.isRefreshing }
 
     do {
-      try await manager.activate(licenseKey: "KEY")
+      try await manager.activate(.licenseKey("KEY"))
       XCTFail("Expected refreshInProgress")
     } catch let error as LicenseError {
       XCTAssertEqual(error, .refreshInProgress)
     }
 
     _ = try await refresh
+    XCTAssertEqual(provider.activationCount, 0)
   }
 }

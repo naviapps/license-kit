@@ -7,7 +7,10 @@ final class UnavailableLicenseProviderTests: XCTestCase {
     let provider = UnavailableLicenseProvider(message: "missing")
 
     await assertRequestFailure(message: "missing") {
-      _ = try await provider.activate(licenseKey: "KEY")
+      _ = try await provider.activate(.licenseKey("KEY"))
+    }
+    await assertRequestFailure(message: "missing") {
+      _ = try await provider.activate(.automatic)
     }
     await assertRequestFailure(message: "missing") {
       try await provider.deactivate(makeActivation())
@@ -21,7 +24,7 @@ final class UnavailableLicenseProviderTests: XCTestCase {
     let provider = UnavailableLicenseProvider()
 
     await assertRequestFailure(message: "License provider is unavailable.") {
-      _ = try await provider.activate(licenseKey: "KEY")
+      _ = try await provider.activate(.licenseKey("KEY"))
     }
   }
 
@@ -29,7 +32,7 @@ final class UnavailableLicenseProviderTests: XCTestCase {
     let provider = UnavailableLicenseProvider(message: " \n ")
 
     await assertRequestFailure(message: "License provider is unavailable.") {
-      _ = try await provider.activate(licenseKey: "KEY")
+      _ = try await provider.activate(.licenseKey("KEY"))
     }
   }
 
@@ -37,7 +40,7 @@ final class UnavailableLicenseProviderTests: XCTestCase {
     let provider = UnavailableLicenseProvider(message: "  missing  ")
 
     await assertRequestFailure(message: "missing") {
-      _ = try await provider.activate(licenseKey: "KEY")
+      _ = try await provider.activate(.licenseKey("KEY"))
     }
   }
 
