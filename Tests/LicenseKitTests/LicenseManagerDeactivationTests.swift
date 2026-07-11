@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import LicenseKit
+import LicenseKit
 
 @MainActor
 final class LicenseManagerDeactivationTests: XCTestCase {
@@ -48,16 +48,105 @@ final class LicenseManagerDeactivationTests: XCTestCase {
     _ = try await refresh
   }
 
+  func testActivateRejectsConcurrentDeactivation() async throws {
+    let activation = makeActivation()
+    let provider = TestProvider(activation: activation)
+    provider.deactivationDelayNanoseconds = 50_000_000
+    let manager = LicenseManager(
+      provider: provider,
+      activationStorage: TestActivationStorage(activation: activation)
+    )
+
+    async let deactivationState: LicenseState = manager.deactivate()
+    try await waitForManagerState { manager.isDeactivating }
+
+    do {
+      try await manager.activate(.licenseKey("KEY"))
+      XCTFail("Expected deactivationInProgress")
+    } catch let error as LicenseError {
+      XCTAssertEqual(error, .deactivationInProgress)
+    }
+
+    let finalState = try await deactivationState
+    XCTAssertFalse(finalState.isDeactivating)
+  }
+
+  func testApplyActivationRejectsConcurrentDeactivation() async throws {
+    let activation = makeActivation()
+    let provider = TestProvider(activation: activation)
+    provider.deactivationDelayNanoseconds = 50_000_000
+    let manager = LicenseManager(
+      provider: provider,
+      activationStorage: TestActivationStorage(activation: activation)
+    )
+
+    async let deactivationState: LicenseState = manager.deactivate()
+    try await waitForManagerState { manager.isDeactivating }
+
+    do {
+      try manager.applyActivation(activation)
+      XCTFail("Expected deactivationInProgress")
+    } catch let error as LicenseError {
+      XCTAssertEqual(error, .deactivationInProgress)
+    }
+
+    let finalState = try await deactivationState
+    XCTAssertFalse(finalState.isDeactivating)
+  }
+
+  func testRefreshSkipsConcurrentDeactivation() async throws {
+    let activation = makeActivation()
+    let provider = TestProvider(activation: activation)
+    provider.deactivationDelayNanoseconds = 50_000_000
+    let manager = LicenseManager(
+      provider: provider,
+      activationStorage: TestActivationStorage(activation: activation)
+    )
+
+    async let deactivationState: LicenseState = manager.deactivate()
+    try await waitForManagerState { manager.isDeactivating }
+
+    let result = try await manager.refresh()
+
+    XCTAssertEqual(result.outcome, .skippedDeactivationInProgress)
+    XCTAssertTrue(result.state.isDeactivating)
+    let finalState = try await deactivationState
+    XCTAssertFalse(finalState.isDeactivating)
+  }
+
+  func testDeactivateRejectsConcurrentDeactivation() async throws {
+    let activation = makeActivation()
+    let provider = TestProvider(activation: activation)
+    provider.deactivationDelayNanoseconds = 50_000_000
+    let manager = LicenseManager(
+      provider: provider,
+      activationStorage: TestActivationStorage(activation: activation)
+    )
+
+    async let deactivationState: LicenseState = manager.deactivate()
+    try await waitForManagerState { manager.isDeactivating }
+
+    do {
+      try await manager.deactivate()
+      XCTFail("Expected deactivationInProgress")
+    } catch let error as LicenseError {
+      XCTAssertEqual(error, .deactivationInProgress)
+    }
+
+    let finalState = try await deactivationState
+    XCTAssertFalse(finalState.isDeactivating)
+  }
+
   func testDeactivateReportsProviderFailureAfterLocalCleanup() async throws {
     let activation = makeActivation()
     let provider = TestProvider(activation: activation)
     provider.deactivationError = LicenseProviderError.transportFailure(message: "offline")
     let activationStorage = TestActivationStorage(activation: activation)
-    let stateSnapshotStorage = TestStateSnapshotStorage(state: makeState(activation: activation))
+    let stateMetadataStorage = TestStateMetadataStorage(state: makeState(activation: activation))
     let manager = LicenseManager(
       provider: provider,
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     do {
@@ -66,10 +155,11 @@ final class LicenseManagerDeactivationTests: XCTestCase {
     } catch let error as LicenseError {
       XCTAssertEqual(error, .requestFailure(message: "offline"))
       XCTAssertEqual(manager.status, .deactivated)
+      XCTAssertFalse(manager.isDeactivating)
       XCTAssertNil(manager.activation)
       XCTAssertEqual(provider.deactivationCount, 1)
       XCTAssertNil(activationStorage.activation)
-      XCTAssertNil(stateSnapshotStorage.snapshot)
+      XCTAssertNil(stateMetadataStorage.metadata)
     }
   }
 
@@ -78,84 +168,108 @@ final class LicenseManagerDeactivationTests: XCTestCase {
     let provider = TestProvider(activation: activation)
     provider.deactivationError = TestUnexpectedError(message: "boom")
     let activationStorage = TestActivationStorage(activation: activation)
-    let stateSnapshotStorage = TestStateSnapshotStorage(state: makeState(activation: activation))
+    let stateMetadataStorage = TestStateMetadataStorage(state: makeState(activation: activation))
     let manager = LicenseManager(
       provider: provider,
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     do {
       try await manager.deactivate()
       XCTFail("Expected provider failure")
     } catch let error as LicenseError {
-      XCTAssertEqual(error, .requestFailure(message: "boom"))
+      XCTAssertEqual(error, .requestFailure(message: "Transport failed."))
       XCTAssertEqual(manager.status, .deactivated)
+      XCTAssertFalse(manager.isDeactivating)
       XCTAssertNil(manager.activation)
       XCTAssertEqual(provider.deactivationCount, 1)
       XCTAssertNil(activationStorage.activation)
-      XCTAssertNil(stateSnapshotStorage.snapshot)
+      XCTAssertNil(stateMetadataStorage.metadata)
     }
   }
 
-  func testDeactivateReportsActivationStorageDeleteFailureWithoutClearingState() async throws {
+  func testDeactivatePropagatesCancellationAfterLocalCleanup() async throws {
+    let activation = makeActivation()
+    let provider = TestProvider(activation: activation)
+    provider.deactivationError = CancellationError()
+    let activationStorage = TestActivationStorage(activation: activation)
+    let stateMetadataStorage = TestStateMetadataStorage(state: makeState(activation: activation))
+    let manager = LicenseManager(
+      provider: provider,
+      activationStorage: activationStorage,
+      stateMetadataStorage: stateMetadataStorage
+    )
+
+    do {
+      try await manager.deactivate()
+      XCTFail("Expected cancellation")
+    } catch is CancellationError {
+      XCTAssertEqual(manager.status, .deactivated)
+      XCTAssertFalse(manager.isDeactivating)
+      XCTAssertNil(manager.activation)
+      XCTAssertNil(activationStorage.activation)
+      XCTAssertNil(stateMetadataStorage.metadata)
+      XCTAssertEqual(provider.deactivationCount, 1)
+    }
+  }
+
+  func testDeactivateReportsActivationStorageDeleteFailureBeforeProviderCall() async throws {
     let activation = makeActivation()
     let provider = TestProvider(activation: activation)
     let activationStorage = TestActivationStorage(activation: activation)
     activationStorage.deleteError = TestUnexpectedError(message: "keychain unavailable")
-    let stateSnapshotStorage = TestStateSnapshotStorage(state: makeState(activation: activation))
+    let stateMetadataStorage = TestStateMetadataStorage(state: makeState(activation: activation))
     let manager = LicenseManager(
       provider: provider,
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     do {
       try await manager.deactivate()
       XCTFail("Expected storage failure")
     } catch let error as LicenseError {
-      XCTAssertEqual(error, .storageFailure(message: "keychain unavailable"))
+      XCTAssertEqual(error, .storageFailure(message: "Storage operation failed."))
       XCTAssertEqual(manager.status, .active)
       XCTAssertEqual(manager.activation, activation)
-      XCTAssertEqual(provider.deactivationCount, 1)
-      XCTAssertEqual(provider.lastDeactivatedActivation, activation)
+      XCTAssertFalse(manager.isDeactivating)
+      XCTAssertEqual(provider.deactivationCount, 0)
+      XCTAssertNil(provider.lastDeactivatedActivation)
       XCTAssertEqual(activationStorage.activation, activation)
-      XCTAssertNotNil(stateSnapshotStorage.snapshot)
+      XCTAssertNotNil(stateMetadataStorage.metadata)
     }
   }
 
-  func testDeactivateReportsStateSnapshotStorageDeleteFailureAfterClearingActivation() async throws
+  func testDeactivateIgnoresStateMetadataStorageDeleteFailureAfterClearingActivation() async throws
   {
     let activation = makeActivation()
     let activationStorage = TestActivationStorage(activation: activation)
-    let stateSnapshotStorage = TestStateSnapshotStorage(state: makeState(activation: activation))
-    stateSnapshotStorage.deleteError = TestUnexpectedError(message: "defaults unavailable")
+    let stateMetadataStorage = TestStateMetadataStorage(state: makeState(activation: activation))
+    stateMetadataStorage.deleteError = TestUnexpectedError(message: "defaults unavailable")
     let manager = LicenseManager(
       provider: TestProvider(activation: activation),
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
-    do {
-      try await manager.deactivate()
-      XCTFail("Expected storage failure")
-    } catch let error as LicenseError {
-      XCTAssertEqual(error, .storageFailure(message: "defaults unavailable"))
-      XCTAssertEqual(manager.status, .deactivated)
-      XCTAssertNil(manager.activation)
-      XCTAssertNil(activationStorage.activation)
-      XCTAssertNotNil(stateSnapshotStorage.snapshot)
-    }
+    let state = try await manager.deactivate()
+
+    XCTAssertEqual(state.status, .deactivated)
+    XCTAssertEqual(manager.status, .deactivated)
+    XCTAssertNil(manager.activation)
+    XCTAssertNil(activationStorage.activation)
+    XCTAssertNotNil(stateMetadataStorage.metadata)
   }
 
   func testDeactivateWithoutActivationSkipsProviderAndClearsPersistence() async throws {
     let provider = TestProvider(activation: makeActivation())
     let activationStorage = TestActivationStorage()
-    let stateSnapshotStorage = TestStateSnapshotStorage()
+    let stateMetadataStorage = TestStateMetadataStorage()
     let manager = LicenseManager(
       provider: provider,
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     let state = try await manager.deactivate()
@@ -164,18 +278,18 @@ final class LicenseManagerDeactivationTests: XCTestCase {
     XCTAssertNil(state.activation)
     XCTAssertEqual(provider.deactivationCount, 0)
     XCTAssertNil(activationStorage.activation)
-    XCTAssertNil(stateSnapshotStorage.snapshot)
+    XCTAssertNil(stateMetadataStorage.metadata)
   }
 
   func testDeactivateReturnsUpdatedState() async throws {
     let activation = makeActivation()
     let provider = TestProvider(activation: activation)
     let activationStorage = TestActivationStorage(activation: activation)
-    let stateSnapshotStorage = TestStateSnapshotStorage(state: makeState(activation: activation))
+    let stateMetadataStorage = TestStateMetadataStorage(state: makeState(activation: activation))
     let manager = LicenseManager(
       provider: provider,
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     let state = try await manager.deactivate()
@@ -185,6 +299,6 @@ final class LicenseManagerDeactivationTests: XCTestCase {
     XCTAssertEqual(provider.deactivationCount, 1)
     XCTAssertEqual(provider.lastDeactivatedActivation, activation)
     XCTAssertNil(activationStorage.activation)
-    XCTAssertNil(stateSnapshotStorage.snapshot)
+    XCTAssertNil(stateMetadataStorage.metadata)
   }
 }

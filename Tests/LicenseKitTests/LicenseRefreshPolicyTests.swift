@@ -1,6 +1,5 @@
+import LicenseKit
 import XCTest
-
-@testable import LicenseKit
 
 final class LicenseRefreshPolicyTests: XCTestCase {
   func testInitializerAcceptsZeroAndPositiveIntervals() throws {

@@ -5,6 +5,7 @@ struct LicenseStateStore: Sendable {
   private(set) var activation: LicenseActivation?
   private(set) var isActivating: Bool
   private(set) var isRefreshing: Bool
+  private(set) var isDeactivating: Bool
   private(set) var lastValidatedAt: Date?
   private(set) var status: LicenseStatus
   private(set) var gracePeriodExpiresAt: Date?
@@ -14,6 +15,7 @@ struct LicenseStateStore: Sendable {
     initialActivation: LicenseActivation? = nil,
     isActivating: Bool = false,
     isRefreshing: Bool = false,
+    isDeactivating: Bool = false,
     resolvedPlan: LicensePlan? = nil,
     lastValidatedAt: Date? = nil,
     status: LicenseStatus? = nil,
@@ -22,6 +24,7 @@ struct LicenseStateStore: Sendable {
     now: Date = Date()
   ) {
     self.isActivating = isActivating
+    self.isDeactivating = isDeactivating && isActivating == false && isRefreshing == false
     self.lastValidatedAt = lastValidatedAt
     self.lastRefreshFailure = lastRefreshFailure
 
@@ -31,7 +34,9 @@ struct LicenseStateStore: Sendable {
       gracePeriodExpiresAt: gracePeriodExpiresAt,
       now: now
     )
-    self.isRefreshing = isRefreshing && isActivating == false && resolvedStatus.isLicensed
+    self.isRefreshing =
+      isRefreshing && isActivating == false && self.isDeactivating == false
+      && resolvedStatus.isLicensed
     if let initialActivation, resolvedStatus.isLicensed {
       activation = initialActivation
       plan = Self.resolveLicensedPlan(
@@ -54,6 +59,7 @@ struct LicenseStateStore: Sendable {
       activation: activation,
       isActivating: isActivating,
       isRefreshing: isRefreshing,
+      isDeactivating: isDeactivating,
       lastValidatedAt: lastValidatedAt,
       status: status,
       gracePeriodExpiresAt: gracePeriodExpiresAt,
@@ -62,12 +68,17 @@ struct LicenseStateStore: Sendable {
   }
 
   mutating func setRefreshing(_ flag: Bool) {
-    isRefreshing = flag && isActivating == false && activation != nil
+    isRefreshing = flag && isActivating == false && isDeactivating == false && activation != nil
   }
 
   mutating func setActivating() {
     isActivating = true
     isRefreshing = false
+    isDeactivating = false
+  }
+
+  mutating func setDeactivating(_ flag: Bool) {
+    isDeactivating = flag && isActivating == false && isRefreshing == false
   }
 
   @discardableResult
@@ -75,6 +86,7 @@ struct LicenseStateStore: Sendable {
     guard activation.isExpired(at: now) == false else {
       self.activation = nil
       isActivating = false
+      isDeactivating = false
       lastValidatedAt = activation.activatedAt
       status = .expired
       gracePeriodExpiresAt = nil
@@ -85,6 +97,7 @@ struct LicenseStateStore: Sendable {
 
     self.activation = activation
     isActivating = false
+    isDeactivating = false
     lastValidatedAt = activation.activatedAt
     status = .active
     gracePeriodExpiresAt = nil
@@ -99,6 +112,7 @@ struct LicenseStateStore: Sendable {
   ) -> LicenseActivation? {
     lastValidatedAt = validationSnapshot.checkedAt
     isActivating = false
+    isDeactivating = false
     gracePeriodExpiresAt = nil
     lastRefreshFailure = nil
     status = resolveLicenseStatus(for: validationSnapshot)
@@ -110,8 +124,14 @@ struct LicenseStateStore: Sendable {
       return nil
     }
 
-    plan = LicensePlan.resolve(validationSnapshot: validationSnapshot)
-    let updatedActivation = updateActivation(activation, from: validationSnapshot)
+    guard let updatedActivation = updatedActivation(activation, from: validationSnapshot) else {
+      status = .invalid
+      self.activation = nil
+      plan = .unlicensed
+      return nil
+    }
+    self.activation = updatedActivation
+    plan = LicensePlan.resolve(activation: updatedActivation)
     return updatedActivation
   }
 
@@ -125,6 +145,7 @@ struct LicenseStateStore: Sendable {
   mutating func markInvalid(failure: LicenseRefreshFailure) {
     activation = nil
     isActivating = false
+    isDeactivating = false
     plan = .unlicensed
     status = .invalid
     gracePeriodExpiresAt = nil
@@ -134,6 +155,7 @@ struct LicenseStateStore: Sendable {
   mutating func markDeactivated() {
     activation = nil
     isActivating = false
+    isDeactivating = false
     plan = .unlicensed
     lastValidatedAt = nil
     status = .deactivated
@@ -141,20 +163,18 @@ struct LicenseStateStore: Sendable {
     lastRefreshFailure = nil
   }
 
-  private mutating func updateActivation(
+  private func updatedActivation(
     _ activation: LicenseActivation,
     from validationSnapshot: LicenseValidationSnapshot
-  ) -> LicenseActivation {
-    let updatedActivation = LicenseActivation(
+  ) -> LicenseActivation? {
+    LicenseActivation(
       source: activation.source,
-      licenseKey: activation.licenseKey,
-      planID: validationSnapshot.planID ?? activation.planID,
-      activationID: activation.activationID,
+      planIdentifier: validationSnapshot.planIdentifier ?? activation.planIdentifier,
       activatedAt: activation.activatedAt,
+      licenseKey: activation.licenseKey,
+      activationIdentifier: activation.activationIdentifier,
       expiresAt: validationSnapshot.expiresAt
     )
-    self.activation = updatedActivation
-    return updatedActivation
   }
 
   private func resolveLicenseStatus(

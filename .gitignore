@@ -1,8 +1,15 @@
-.DS_Store
 .build/
 .swiftpm/
+.DS_Store
+.envrc
+.env
+.env.*
+!.env.example
+Package.resolved
+*.doccarchive
 DerivedData/
 xcuserdata/
 *.xcodeproj
 *.xcworkspace
-Package.resolved
+*.xcresult
+*.log

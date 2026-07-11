@@ -1,7 +1,7 @@
 import Foundation
 
 /// The current high-level license state.
-public enum LicenseStatus: String, Codable, Equatable, CaseIterable, Sendable {
+public enum LicenseStatus: String, Codable, Equatable, Hashable, CaseIterable, Sendable {
   /// No activation is currently available.
   case unlicensed
 
@@ -27,7 +27,7 @@ public enum LicenseStatus: String, Codable, Equatable, CaseIterable, Sendable {
 }
 
 /// The app-facing snapshot of license state managed by ``LicenseManager``.
-public struct LicenseState: Equatable, Sendable {
+public struct LicenseState: Equatable, Hashable, Sendable {
   /// The resolved plan for the current state.
   public let plan: LicensePlan
 
@@ -40,7 +40,10 @@ public struct LicenseState: Equatable, Sendable {
   /// Whether a refresh operation is currently running.
   public let isRefreshing: Bool
 
-  /// The last accepted activation or successful provider validation time.
+  /// Whether a deactivation operation is currently running.
+  public let isDeactivating: Bool
+
+  /// The last activation or validation decision time.
   public let lastValidatedAt: Date?
 
   /// The current high-level license status.
@@ -62,12 +65,13 @@ public struct LicenseState: Equatable, Sendable {
     status.isLicensed
   }
 
-  /// Creates a normalized license state snapshot.
+  /// Creates a normalized license state.
   public init(
     plan: LicensePlan = .unlicensed,
     activation: LicenseActivation? = nil,
     isActivating: Bool = false,
     isRefreshing: Bool = false,
+    isDeactivating: Bool = false,
     lastValidatedAt: Date? = nil,
     status: LicenseStatus = .unlicensed,
     gracePeriodExpiresAt: Date? = nil,
@@ -76,7 +80,7 @@ public struct LicenseState: Equatable, Sendable {
     let resolvedStatus: LicenseStatus
     if activation == nil {
       resolvedStatus = status.isLicensed ? .unlicensed : status
-    } else if activation?.isExpired == true || plan.isExpired {
+    } else if activation?.isExpired(at: Date()) == true || plan.isExpired {
       resolvedStatus = .expired
     } else if status == .gracePeriod && gracePeriodExpiresAt == nil {
       resolvedStatus = .active
@@ -93,7 +97,9 @@ public struct LicenseState: Equatable, Sendable {
     self.plan = resolvedPlan
     self.activation = resolvedActivation
     self.isActivating = isActivating
-    self.isRefreshing = isRefreshing && isActivating == false && resolvedActivation != nil
+    self.isRefreshing =
+      isRefreshing && isActivating == false && isDeactivating == false && resolvedActivation != nil
+    self.isDeactivating = isDeactivating && isActivating == false && isRefreshing == false
     self.lastValidatedAt = lastValidatedAt
     self.status = resolvedStatus
     self.gracePeriodExpiresAt = resolvedStatus == .gracePeriod ? gracePeriodExpiresAt : nil
