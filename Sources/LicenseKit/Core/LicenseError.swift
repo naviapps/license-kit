@@ -1,6 +1,7 @@
 import Foundation
 
-public enum LicenseError: Error, Equatable, Sendable {
+/// Errors thrown by LicenseKit state and provider coordination.
+public enum LicenseError: Error, Equatable, Hashable, Sendable {
   /// The provided license key is empty after normalization.
   case invalidLicenseKey
 
@@ -25,25 +26,31 @@ public enum LicenseError: Error, Equatable, Sendable {
   /// A refresh operation is already running.
   case refreshInProgress
 
+  /// A deactivation operation is already running.
+  case deactivationInProgress
+
   /// The provider reported a server-side failure.
   case serverFailure(statusCode: Int)
 
   /// The provider returned an unexpected response shape.
   case unexpectedProviderResponse
 
-  /// A non-storage request failed.
+  /// A provider or network request failed without a definitive license result.
   case requestFailure(message: String)
 
+  /// The normalized diagnostic message attached to message-bearing errors.
   public var message: String? {
-    if case .storageFailure(let message) = self {
-      return message.licenseKitTrimmedNonEmpty ?? Self.defaultStorageFailureMessage
+    switch self {
+    case .storageFailure(let message):
+      Self.normalizedStorageFailureMessage(message)
+    case .requestFailure(let message):
+      Self.normalizedRequestFailureMessage(message)
+    default:
+      nil
     }
-    if case .requestFailure(let message) = self {
-      return message.licenseKitTrimmedNonEmpty ?? Self.defaultRequestFailureMessage
-    }
-    return nil
   }
 
+  /// The server status code attached to server failures.
   public var statusCode: Int? {
     if case .serverFailure(let statusCode) = self { return statusCode }
     return nil
@@ -51,39 +58,73 @@ public enum LicenseError: Error, Equatable, Sendable {
 }
 
 extension LicenseError {
+  /// Returns whether two license errors represent the same normalized failure.
   public static func == (lhs: LicenseError, rhs: LicenseError) -> Bool {
-    switch (lhs, rhs) {
-    case (.invalidLicenseKey, .invalidLicenseKey),
-      (.invalidLicense, .invalidLicense),
-      (.expiredLicense, .expiredLicense),
-      (.activationLimitReached, .activationLimitReached),
-      (.invalidProviderConfiguration, .invalidProviderConfiguration),
-      (.activationInProgress, .activationInProgress),
-      (.refreshInProgress, .refreshInProgress),
-      (.unexpectedProviderResponse, .unexpectedProviderResponse):
-      true
-    case (.storageFailure, .storageFailure),
-      (.requestFailure, .requestFailure):
-      lhs.message == rhs.message
-    case (.serverFailure, .serverFailure):
-      lhs.statusCode == rhs.statusCode
-    default:
-      false
+    lhs.identity == rhs.identity
+  }
+
+  /// Hashes the same normalized failure identity used by ``==(_:_:)``.
+  public func hash(into hasher: inout Hasher) {
+    hasher.combine(identity)
+  }
+
+  private var identity: NormalizedIdentity {
+    switch self {
+    case .invalidLicenseKey:
+      .invalidLicenseKey
+    case .storageFailure(let message):
+      .storageFailure(message: Self.normalizedStorageFailureMessage(message))
+    case .invalidLicense:
+      .invalidLicense
+    case .expiredLicense:
+      .expiredLicense
+    case .activationLimitReached:
+      .activationLimitReached
+    case .invalidProviderConfiguration:
+      .invalidProviderConfiguration
+    case .activationInProgress:
+      .activationInProgress
+    case .refreshInProgress:
+      .refreshInProgress
+    case .deactivationInProgress:
+      .deactivationInProgress
+    case .serverFailure(let statusCode):
+      .serverFailure(statusCode: statusCode)
+    case .unexpectedProviderResponse:
+      .unexpectedProviderResponse
+    case .requestFailure(let message):
+      .requestFailure(message: Self.normalizedRequestFailureMessage(message))
     }
+  }
+
+  private enum NormalizedIdentity: Hashable {
+    case invalidLicenseKey
+    case storageFailure(message: String)
+    case invalidLicense
+    case expiredLicense
+    case activationLimitReached
+    case invalidProviderConfiguration
+    case activationInProgress
+    case refreshInProgress
+    case deactivationInProgress
+    case serverFailure(statusCode: Int)
+    case unexpectedProviderResponse
+    case requestFailure(message: String)
   }
 }
 
 extension LicenseError: CustomStringConvertible {
+  /// A canonical textual description of the error.
   public var description: String {
     switch self {
     case .serverFailure(let statusCode):
       "server_failure(\(statusCode))"
-    case .requestFailure:
-      "request_failure(\(message ?? Self.defaultRequestFailureMessage))"
+    case .requestFailure(let message):
+      "request_failure(\(Self.normalizedRequestFailureMessage(message)))"
     case .invalidLicenseKey:
       "invalid_license_key"
-    case .storageFailure:
-      "storage_failure(\(message ?? Self.defaultStorageFailureMessage))"
+    case .storageFailure(let message):
+      "storage_failure(\(Self.normalizedStorageFailureMessage(message)))"
     case .invalidLicense:
       "invalid_license"
     case .expiredLicense:
@@ -96,6 +137,8 @@ extension LicenseError: CustomStringConvertible {
       "activation_in_progress"
     case .refreshInProgress:
       "refresh_in_progress"
+    case .deactivationInProgress:
+      "deactivation_in_progress"
     case .unexpectedProviderResponse:
       "unexpected_provider_response"
     }
@@ -103,21 +146,34 @@ extension LicenseError: CustomStringConvertible {
 }
 
 extension LicenseError: LocalizedError {
+  /// A diagnostic error description backed by ``description``.
   public var errorDescription: String? {
     description
   }
 }
 
 extension LicenseError {
-  static let defaultStorageFailureMessage = "Storage operation failed."
-  static let defaultRequestFailureMessage = "Request failed."
+  private static let defaultStorageFailureMessage = "Storage operation failed."
+  private static let defaultRequestFailureMessage = "Request failed."
 
-  static func storageFailure(_ error: Error) -> LicenseError {
+  private static func normalizedStorageFailureMessage(_ message: String) -> String {
+    message.licenseKitTrimmedNonEmpty ?? defaultStorageFailureMessage
+  }
+
+  private static func normalizedRequestFailureMessage(_ message: String) -> String {
+    message.licenseKitTrimmedNonEmpty ?? defaultRequestFailureMessage
+  }
+
+  static func storageFailure(normalizing error: Error) -> LicenseError {
     if let licenseError = error as? LicenseError, case .storageFailure = licenseError {
       return licenseError
     }
-    return .storageFailure(
-      message: String(describing: error).licenseKitTrimmedNonEmpty ?? defaultStorageFailureMessage
+    return .storageFailure(message: defaultStorageFailureMessage)
+  }
+
+  static func requestFailure(normalizing message: String?) -> LicenseError {
+    .requestFailure(
+      message: message.map(normalizedRequestFailureMessage) ?? defaultRequestFailureMessage
     )
   }
 }

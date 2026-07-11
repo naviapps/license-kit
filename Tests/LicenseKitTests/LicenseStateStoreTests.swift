@@ -4,14 +4,14 @@ import XCTest
 
 final class LicenseStateStoreTests: XCTestCase {
   func testApplyActivationUpdatesPlanStatusAndState() {
-    let activation = makeActivation(planID: "team")
+    let activation = makeActivation(planIdentifier: "team")
     var store = LicenseStateStore(isActivating: true)
 
     store.applyActivation(activation)
 
     XCTAssertFalse(store.isActivating)
     XCTAssertFalse(store.state.isActivating)
-    XCTAssertEqual(store.plan.id, "team")
+    XCTAssertEqual(store.plan.identifier, "team")
     XCTAssertEqual(store.status, .active)
     XCTAssertEqual(store.lastValidatedAt, activation.activatedAt)
     XCTAssertEqual(store.state.activation, activation)
@@ -20,7 +20,11 @@ final class LicenseStateStoreTests: XCTestCase {
 
   func testApplyActivationExpiresPastActivation() {
     let now = Date(timeIntervalSince1970: 1_700_000_000)
-    let activation = makeActivation(planID: "team", expiresAt: now)
+    let activation = makeActivation(
+      planIdentifier: "team",
+      activatedAt: now.addingTimeInterval(-1),
+      expiresAt: now
+    )
     var store = LicenseStateStore(initialActivation: makeActivation())
     store.markGrace(
       until: now.addingTimeInterval(60),
@@ -40,10 +44,58 @@ final class LicenseStateStoreTests: XCTestCase {
     XCTAssertNil(store.lastRefreshFailure)
   }
 
+  func testValidationSnapshotWithoutPlanIdentifierKeepsCurrentActivationPlan() {
+    let activation = makeActivation(planIdentifier: "team")
+    var store = LicenseStateStore(initialActivation: activation)
+
+    let updatedActivation = store.applyValidationSnapshot(
+      LicenseValidationSnapshot(
+        planIdentifier: nil,
+        isLicensed: true,
+        expiresAt: nil,
+        checkedAt: Date(timeIntervalSince1970: 1_700_000_100)
+      )
+    )
+
+    XCTAssertEqual(updatedActivation?.planIdentifier, "team")
+    XCTAssertEqual(store.activation?.planIdentifier, "team")
+    XCTAssertEqual(store.plan, makePlan(identifier: "team", isLicensed: true))
+    XCTAssertEqual(store.status, .active)
+  }
+
+  func testValidationSnapshotDefaultsToActivationPlanWhenPlanIdentifierIsOmitted() {
+    let checkedAt = Date(timeIntervalSince1970: 1_700_000_000)
+    let activation = makeActivation(planIdentifier: "fallback")
+    let snapshot = LicenseValidationSnapshot(
+      result: makeValidationResult(
+        isValid: true,
+        planIdentifier: nil
+      ),
+      activation: activation,
+      checkedAt: checkedAt
+    )
+
+    XCTAssertEqual(snapshot.planIdentifier, "fallback")
+    XCTAssertTrue(snapshot.isLicensed)
+    XCTAssertNil(snapshot.expiresAt)
+    XCTAssertEqual(snapshot.checkedAt, checkedAt)
+  }
+
+  func testValidationSnapshotDoesNotNormalizeExplicitPlanIdentifier() {
+    let snapshot = LicenseValidationSnapshot(
+      planIdentifier: " \n ",
+      isLicensed: true,
+      expiresAt: nil,
+      checkedAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+
+    XCTAssertEqual(snapshot.planIdentifier, " \n ")
+  }
+
   func testInitialStateNormalizesImpossibleActivationlessLicensedStatus() {
     let store = LicenseStateStore(
       initialActivation: nil,
-      resolvedPlan: LicensePlan(id: "pro", isLicensed: true, expiresAt: nil),
+      resolvedPlan: makePlan(identifier: "pro", isLicensed: true, expiresAt: nil),
       status: .gracePeriod,
       gracePeriodExpiresAt: Date().addingTimeInterval(60)
     )
@@ -88,7 +140,10 @@ final class LicenseStateStoreTests: XCTestCase {
 
   func testInitialStateExpiresPastActivation() {
     let now = Date(timeIntervalSince1970: 1_700_000_000)
-    let activation = makeActivation(expiresAt: now)
+    let activation = makeActivation(
+      activatedAt: now.addingTimeInterval(-1),
+      expiresAt: now
+    )
     let store = LicenseStateStore(
       initialActivation: activation,
       status: .active,
@@ -127,7 +182,7 @@ final class LicenseStateStoreTests: XCTestCase {
   func testInitialStateNormalizesActivationWithUnlicensedStatus() {
     let store = LicenseStateStore(
       initialActivation: makeActivation(),
-      resolvedPlan: LicensePlan(id: "pro", isLicensed: true, expiresAt: nil),
+      resolvedPlan: makePlan(identifier: "pro", isLicensed: true, expiresAt: nil),
       status: .expired,
       gracePeriodExpiresAt: Date().addingTimeInterval(60)
     )
@@ -139,7 +194,7 @@ final class LicenseStateStoreTests: XCTestCase {
   }
 
   func testInitialStateRebuildsUnlicensedPlanForLicensedActivation() {
-    let activation = makeActivation(planID: "pro")
+    let activation = makeActivation(planIdentifier: "pro")
     let store = LicenseStateStore(
       initialActivation: activation,
       resolvedPlan: .unlicensed,
@@ -242,7 +297,10 @@ final class LicenseStateStoreTests: XCTestCase {
   func testInitialRefreshingRequiresResolvedLicensedState() {
     let now = Date(timeIntervalSince1970: 1_700_000_000)
     let expiredStore = LicenseStateStore(
-      initialActivation: makeActivation(expiresAt: now),
+      initialActivation: makeActivation(
+        activatedAt: now.addingTimeInterval(-1),
+        expiresAt: now
+      ),
       isRefreshing: true,
       status: .active,
       now: now
@@ -297,7 +355,7 @@ final class LicenseStateStoreTests: XCTestCase {
 
   func testApplyValidationSnapshotUpdatesActivationAndClearsRefreshFailure() {
     let checkedAt = Date(timeIntervalSince1970: 1_700_000_000)
-    let activation = makeActivation(planID: "starter")
+    let activation = makeActivation(planIdentifier: "starter")
     var store = LicenseStateStore(initialActivation: activation)
     store.markGrace(
       until: checkedAt.addingTimeInterval(60),
@@ -310,7 +368,7 @@ final class LicenseStateStoreTests: XCTestCase {
 
     let updatedActivation = store.applyValidationSnapshot(
       LicenseValidationSnapshot(
-        planID: "team",
+        planIdentifier: "team",
         isLicensed: true,
         expiresAt: checkedAt.addingTimeInterval(3_600),
         checkedAt: checkedAt
@@ -318,15 +376,15 @@ final class LicenseStateStoreTests: XCTestCase {
     )
 
     XCTAssertEqual(store.status, .active)
-    XCTAssertEqual(store.plan.id, "team")
+    XCTAssertEqual(store.plan.identifier, "team")
     XCTAssertEqual(store.lastValidatedAt, checkedAt)
     XCTAssertNil(store.gracePeriodExpiresAt)
     XCTAssertNil(store.lastRefreshFailure)
     XCTAssertEqual(store.activation, updatedActivation)
-    XCTAssertEqual(updatedActivation?.planID, "team")
+    XCTAssertEqual(updatedActivation?.planIdentifier, "team")
     XCTAssertEqual(updatedActivation?.source, activation.source)
     XCTAssertEqual(updatedActivation?.licenseKey, activation.licenseKey)
-    XCTAssertEqual(updatedActivation?.activationID, activation.activationID)
+    XCTAssertEqual(updatedActivation?.activationIdentifier, activation.activationIdentifier)
     XCTAssertEqual(updatedActivation?.activatedAt, activation.activatedAt)
     XCTAssertEqual(updatedActivation?.expiresAt, checkedAt.addingTimeInterval(3_600))
   }
@@ -338,7 +396,7 @@ final class LicenseStateStoreTests: XCTestCase {
     XCTAssertNil(
       invalidStore.applyValidationSnapshot(
         LicenseValidationSnapshot(
-          planID: nil,
+          planIdentifier: nil,
           isLicensed: false,
           expiresAt: nil,
           checkedAt: checkedAt
@@ -353,7 +411,7 @@ final class LicenseStateStoreTests: XCTestCase {
     XCTAssertNil(
       expiredStore.applyValidationSnapshot(
         LicenseValidationSnapshot(
-          planID: nil,
+          planIdentifier: nil,
           isLicensed: false,
           expiresAt: checkedAt.addingTimeInterval(-1),
           checkedAt: checkedAt
@@ -368,7 +426,7 @@ final class LicenseStateStoreTests: XCTestCase {
     XCTAssertNil(
       expiredValidStore.applyValidationSnapshot(
         LicenseValidationSnapshot(
-          planID: "pro",
+          planIdentifier: "pro",
           isLicensed: true,
           expiresAt: checkedAt,
           checkedAt: checkedAt
@@ -380,6 +438,27 @@ final class LicenseStateStoreTests: XCTestCase {
     XCTAssertEqual(expiredValidStore.status, .expired)
   }
 
+  func testApplyValidationSnapshotClearsActivationWhenExpirationPrecedesActivation() {
+    let activatedAt = Date(timeIntervalSince1970: 1_700_000_000)
+    let checkedAt = activatedAt.addingTimeInterval(-20)
+    var store = LicenseStateStore(initialActivation: makeActivation(activatedAt: activatedAt))
+
+    XCTAssertNil(
+      store.applyValidationSnapshot(
+        LicenseValidationSnapshot(
+          planIdentifier: "pro",
+          isLicensed: true,
+          expiresAt: activatedAt.addingTimeInterval(-10),
+          checkedAt: checkedAt
+        )
+      )
+    )
+
+    XCTAssertNil(store.activation)
+    XCTAssertEqual(store.plan, .unlicensed)
+    XCTAssertEqual(store.status, .invalid)
+  }
+
   func testApplyValidationSnapshotRequiresActivationForLicensedState() {
     let checkedAt = Date(timeIntervalSince1970: 1_700_000_000)
     var store = LicenseStateStore()
@@ -387,7 +466,7 @@ final class LicenseStateStoreTests: XCTestCase {
     XCTAssertNil(
       store.applyValidationSnapshot(
         LicenseValidationSnapshot(
-          planID: "pro",
+          planIdentifier: "pro",
           isLicensed: true,
           expiresAt: checkedAt.addingTimeInterval(3_600),
           checkedAt: checkedAt

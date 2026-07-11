@@ -1,17 +1,17 @@
 import Security
 import XCTest
 
-@testable import LicenseKit
+import LicenseKit
 
-final class LicenseStorageTests: XCTestCase {
+final class LicensePersistenceStorageTests: XCTestCase {
   func testKeychainActivationStorageRoundTripAndDelete() throws {
     let storage = KeychainLicenseActivationStorage(
       service: "LicenseKitTests.\(UUID().uuidString)",
       account: "license"
     )
     defer { try? storage.delete() }
-    let activation = makeActivation(source: "source-a")
-    let updatedActivation = makeActivation(source: "source-b", planID: "team")
+    let activation = makeActivation(source: makeSource("source-a"))
+    let updatedActivation = makeActivation(source: makeSource("source-b"), planIdentifier: "team")
 
     try storage.delete()
     XCTAssertNil(try storage.load())
@@ -65,82 +65,47 @@ final class LicenseStorageTests: XCTestCase {
     defer { try? storage.delete() }
 
     try storage.delete()
-    let activation = makeActivation(source: "custom-accessibility")
+    let activation = makeActivation(source: makeSource("custom-accessibility"))
 
     try storage.save(activation)
 
     XCTAssertEqual(try storage.load(), activation)
   }
 
-  func testUserDefaultsStateStorageRoundTripOverwriteAndDelete() throws {
+  func testUserDefaultsStateMetadataStorageRoundTripOverwriteAndDelete() throws {
     let suiteName = "LicenseKitTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
-    let storage = UserDefaultsLicenseStateSnapshotStorage(
+    let storage = UserDefaultsLicenseStateMetadataStorage(
       defaults: defaults,
-      storageKey: "snapshot"
+      storageKey: "metadata"
     )
-    let activation = makeActivation()
-    let failure = LicenseRefreshFailure(
-      reason: .transportFailure,
-      message: "offline",
-      occurredAt: Date(timeIntervalSince1970: 1_700_000_100)
-    )
-    let state = LicenseState(
-      plan: LicensePlan(id: "pro", isLicensed: true, expiresAt: nil),
-      activation: activation,
-      isRefreshing: false,
-      lastValidatedAt: Date(timeIntervalSince1970: 1_700_000_000),
-      status: .gracePeriod,
-      gracePeriodExpiresAt: Date(timeIntervalSince1970: 1_700_086_400),
-      lastRefreshFailure: failure
-    )
-    let snapshot = try XCTUnwrap(LicenseStateSnapshot(state: state))
-    let updatedActivation = makeActivation(planID: "team")
-    let updatedState = LicenseState(
-      plan: LicensePlan(id: "team", isLicensed: true, expiresAt: nil),
-      activation: updatedActivation,
-      isRefreshing: false,
-      lastValidatedAt: Date(timeIntervalSince1970: 1_700_000_200),
-      status: .active,
-      gracePeriodExpiresAt: nil,
-      lastRefreshFailure: nil
-    )
-    let updatedSnapshot = try XCTUnwrap(LicenseStateSnapshot(state: updatedState))
+    let metadataData = Data("metadata-v1".utf8)
+    let updatedMetadataData = Data("metadata-v2".utf8)
 
     XCTAssertNil(try storage.load())
 
-    try storage.save(snapshot)
-    let loadedSnapshot = try XCTUnwrap(try storage.load())
-    XCTAssertEqual(loadedSnapshot.restoreState(activation: activation), state)
+    try storage.save(metadataData)
+    XCTAssertEqual(try storage.load(), metadataData)
 
-    try storage.save(updatedSnapshot)
-    let loadedUpdatedSnapshot = try XCTUnwrap(try storage.load())
-    XCTAssertEqual(
-      loadedUpdatedSnapshot.restoreState(activation: updatedActivation),
-      updatedState
-    )
+    try storage.save(updatedMetadataData)
+    XCTAssertEqual(try storage.load(), updatedMetadataData)
 
     try storage.delete()
     try storage.delete()
     XCTAssertNil(try storage.load())
   }
 
-  func testUserDefaultsStateStorageReportsDecodingFailure() throws {
+  func testUserDefaultsStateMetadataStoragePreservesOpaqueData() throws {
     let suiteName = "LicenseKitTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
     defer { defaults.removePersistentDomain(forName: suiteName) }
-    let storage = UserDefaultsLicenseStateSnapshotStorage(
+    let storage = UserDefaultsLicenseStateMetadataStorage(
       defaults: defaults,
-      storageKey: "snapshot"
+      storageKey: "metadata"
     )
-    defaults.set(Data("not json".utf8), forKey: "snapshot")
+    defaults.set(Data("not json".utf8), forKey: "metadata")
 
-    XCTAssertThrowsError(try storage.load()) { error in
-      guard case .storageFailure(let message) = error as? LicenseError else {
-        return XCTFail("Expected storage failure.")
-      }
-      XCTAssertFalse(message.isEmpty)
-    }
+    XCTAssertEqual(try storage.load(), Data("not json".utf8))
   }
 }

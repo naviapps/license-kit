@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import LicenseKit
+import LicenseKit
 
 @MainActor
 final class LicenseManagerRestoreTests: XCTestCase {
@@ -18,16 +18,16 @@ final class LicenseManagerRestoreTests: XCTestCase {
     XCTAssertEqual(manager.status, .unlicensed)
   }
 
-  func testInitialRestoreKeepsStateSnapshotLoadFailureObservable() {
+  func testInitialRestoreKeepsStateMetadataLoadFailureObservable() {
     let activation = makeActivation()
-    let stateSnapshotStorage = TestStateSnapshotStorage()
-    stateSnapshotStorage.loadError = LicenseError.storageFailure(
+    let stateMetadataStorage = TestStateMetadataStorage()
+    stateMetadataStorage.loadError = LicenseError.storageFailure(
       message: "Storage operation failed.")
 
     let manager = LicenseManager(
       provider: TestProvider(activation: activation),
       activationStorage: TestActivationStorage(activation: activation),
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     XCTAssertEqual(
@@ -36,7 +36,65 @@ final class LicenseManagerRestoreTests: XCTestCase {
     XCTAssertEqual(manager.status, .active)
   }
 
-  func testInitialRestoreUsesMatchingStateSnapshot() {
+  func testInitialRestoreKeepsStateMetadataDecodeFailureObservableAndClearsPayload() {
+    let activation = makeActivation()
+    let stateMetadataStorage = TestStateMetadataStorage()
+    stateMetadataStorage.metadataData = Data("not json".utf8)
+
+    let manager = LicenseManager(
+      provider: TestProvider(activation: activation),
+      activationStorage: TestActivationStorage(activation: activation),
+      stateMetadataStorage: stateMetadataStorage
+    )
+
+    guard case .storageFailure(let message) = manager.initialRestoreError else {
+      return XCTFail("Expected metadata decode failure to be exposed.")
+    }
+    XCTAssertFalse(message.isEmpty)
+    XCTAssertEqual(manager.activation, activation)
+    XCTAssertEqual(manager.status, .active)
+    XCTAssertNil(stateMetadataStorage.metadataData)
+  }
+
+  func testInitialRestoreIgnoresStateMetadataDeleteFailureAfterDecodeFailure() {
+    let activation = makeActivation()
+    let stateMetadataStorage = TestStateMetadataStorage()
+    stateMetadataStorage.metadataData = Data("not json".utf8)
+    stateMetadataStorage.deleteError = TestUnexpectedError(message: "defaults unavailable")
+
+    let manager = LicenseManager(
+      provider: TestProvider(activation: activation),
+      activationStorage: TestActivationStorage(activation: activation),
+      stateMetadataStorage: stateMetadataStorage
+    )
+
+    guard case .storageFailure(let message) = manager.initialRestoreError else {
+      return XCTFail("Expected metadata decode failure to be exposed.")
+    }
+    XCTAssertFalse(message.isEmpty)
+    XCTAssertEqual(manager.activation, activation)
+    XCTAssertEqual(manager.status, .active)
+    XCTAssertNotNil(stateMetadataStorage.metadataData)
+  }
+
+  func testInitialRestoreClearsMetadataWhenActivationIsMissing() {
+    let stateMetadataStorage = TestStateMetadataStorage(
+      state: makeState(activation: makeActivation())
+    )
+
+    let manager = LicenseManager(
+      provider: TestProvider(activation: makeActivation()),
+      activationStorage: TestActivationStorage(),
+      stateMetadataStorage: stateMetadataStorage
+    )
+
+    XCTAssertNil(manager.initialRestoreError)
+    XCTAssertEqual(manager.status, .unlicensed)
+    XCTAssertNil(manager.activation)
+    XCTAssertNil(stateMetadataStorage.metadata)
+  }
+
+  func testInitialRestoreUsesMatchingStateMetadata() {
     let activation = makeActivation()
     let lastValidatedAt = Date(timeIntervalSince1970: 1_700_000_100)
     let gracePeriodExpiresAt = Date().addingTimeInterval(60)
@@ -45,7 +103,7 @@ final class LicenseManagerRestoreTests: XCTestCase {
       message: "offline",
       occurredAt: Date(timeIntervalSince1970: 1_700_000_050)
     )
-    let stateSnapshotStorage = TestStateSnapshotStorage(
+    let stateMetadataStorage = TestStateMetadataStorage(
       state: makeState(
         activation: activation,
         lastValidatedAt: lastValidatedAt,
@@ -58,7 +116,7 @@ final class LicenseManagerRestoreTests: XCTestCase {
     let manager = LicenseManager(
       provider: TestProvider(activation: activation),
       activationStorage: TestActivationStorage(activation: activation),
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     XCTAssertNil(manager.initialRestoreError)
@@ -69,10 +127,12 @@ final class LicenseManagerRestoreTests: XCTestCase {
     XCTAssertEqual(manager.lastRefreshFailure, failure)
   }
 
-  func testInitialRestoreIgnoresMismatchedStateSnapshot() {
-    let activation = makeActivation(activationID: "current-instance")
-    let staleActivation = makeActivation(activationID: "stale-instance")
-    let stateSnapshotStorage = TestStateSnapshotStorage(
+  func testInitialRestoreClearsMismatchedStateMetadata() {
+    let activation = makeActivation()
+    let staleActivation = makeActivation(
+      activatedAt: Date(timeIntervalSince1970: 1_700_000_001)
+    )
+    let stateMetadataStorage = TestStateMetadataStorage(
       state: makeState(
         activation: staleActivation,
         lastValidatedAt: Date(timeIntervalSince1970: 1_700_000_100),
@@ -89,7 +149,7 @@ final class LicenseManagerRestoreTests: XCTestCase {
     let manager = LicenseManager(
       provider: TestProvider(activation: activation),
       activationStorage: TestActivationStorage(activation: activation),
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     XCTAssertNil(manager.initialRestoreError)
@@ -98,18 +158,18 @@ final class LicenseManagerRestoreTests: XCTestCase {
     XCTAssertNil(manager.lastValidatedAt)
     XCTAssertNil(manager.gracePeriodExpiresAt)
     XCTAssertNil(manager.lastRefreshFailure)
-    XCTAssertNotNil(stateSnapshotStorage.snapshot)
+    XCTAssertNil(stateMetadataStorage.metadata)
   }
 
   func testInitialRestoreCanSkipPersistedActivation() {
     let activation = makeActivation()
     let activationStorage = TestActivationStorage(activation: activation)
-    let stateSnapshotStorage = TestStateSnapshotStorage(state: makeState(activation: activation))
+    let stateMetadataStorage = TestStateMetadataStorage(state: makeState(activation: activation))
 
     let manager = LicenseManager(
       provider: TestProvider(activation: activation),
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage,
+      stateMetadataStorage: stateMetadataStorage,
       restorePersistedActivation: false
     )
 
@@ -117,7 +177,7 @@ final class LicenseManagerRestoreTests: XCTestCase {
     XCTAssertEqual(manager.status, .unlicensed)
     XCTAssertNil(manager.activation)
     XCTAssertEqual(activationStorage.activation, activation)
-    XCTAssertNotNil(stateSnapshotStorage.snapshot)
+    XCTAssertNotNil(stateMetadataStorage.metadata)
   }
 
   func testInitialRestoreInvalidatesExpiredGracePeriodAndClearsPersistence() throws {
@@ -128,7 +188,7 @@ final class LicenseManagerRestoreTests: XCTestCase {
       message: "offline",
       occurredAt: Date(timeIntervalSince1970: 1)
     )
-    let stateSnapshotStorage = TestStateSnapshotStorage(
+    let stateMetadataStorage = TestStateMetadataStorage(
       state: makeState(
         activation: activation,
         status: .gracePeriod,
@@ -140,21 +200,21 @@ final class LicenseManagerRestoreTests: XCTestCase {
     let manager = LicenseManager(
       provider: provider,
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     XCTAssertEqual(manager.status, .invalid)
     XCTAssertEqual(manager.lastRefreshFailure, failure)
     XCTAssertNil(manager.activation)
     XCTAssertNil(activationStorage.activation)
-    XCTAssertNil(stateSnapshotStorage.snapshot)
+    XCTAssertNil(stateMetadataStorage.metadata)
   }
 
   func testInitialRestoreKeepsActivationDeleteFailureObservable() {
     let activation = makeActivation()
     let activationStorage = TestActivationStorage(activation: activation)
     activationStorage.deleteError = TestUnexpectedError(message: "keychain unavailable")
-    let stateSnapshotStorage = TestStateSnapshotStorage(
+    let stateMetadataStorage = TestStateMetadataStorage(
       state: makeState(
         activation: activation,
         status: .gracePeriod,
@@ -165,45 +225,51 @@ final class LicenseManagerRestoreTests: XCTestCase {
     let manager = LicenseManager(
       provider: TestProvider(activation: activation),
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
-    XCTAssertEqual(manager.initialRestoreError, .storageFailure(message: "keychain unavailable"))
+    XCTAssertEqual(
+      manager.initialRestoreError,
+      .storageFailure(message: "Storage operation failed.")
+    )
     XCTAssertEqual(manager.status, .invalid)
     XCTAssertNil(manager.activation)
     XCTAssertEqual(activationStorage.activation, activation)
-    XCTAssertNotNil(stateSnapshotStorage.snapshot)
+    XCTAssertNotNil(stateMetadataStorage.metadata)
   }
 
-  func testInitialRestoreKeepsStateSnapshotDeleteFailureObservable() {
+  func testInitialRestoreIgnoresStateMetadataDeleteFailure() {
     let activation = makeActivation()
     let activationStorage = TestActivationStorage(activation: activation)
-    let stateSnapshotStorage = TestStateSnapshotStorage(
+    let stateMetadataStorage = TestStateMetadataStorage(
       state: makeState(
         activation: activation,
         status: .gracePeriod,
         gracePeriodExpiresAt: Date(timeIntervalSince1970: 1)
       )
     )
-    stateSnapshotStorage.deleteError = TestUnexpectedError(message: "defaults unavailable")
+    stateMetadataStorage.deleteError = TestUnexpectedError(message: "defaults unavailable")
 
     let manager = LicenseManager(
       provider: TestProvider(activation: activation),
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
-    XCTAssertEqual(manager.initialRestoreError, .storageFailure(message: "defaults unavailable"))
+    XCTAssertNil(manager.initialRestoreError)
     XCTAssertEqual(manager.status, .invalid)
     XCTAssertNil(manager.activation)
     XCTAssertNil(activationStorage.activation)
-    XCTAssertNotNil(stateSnapshotStorage.snapshot)
+    XCTAssertNotNil(stateMetadataStorage.metadata)
   }
 
   func testInitialRestoreExpiresPastActivationAndClearsPersistence() throws {
-    let activation = makeActivation(expiresAt: Date(timeIntervalSince1970: 1))
+    let activation = makeActivation(
+      activatedAt: Date(timeIntervalSince1970: 0),
+      expiresAt: Date(timeIntervalSince1970: 1)
+    )
     let provider = TestProvider(activation: activation)
-    let stateSnapshotStorage = TestStateSnapshotStorage(
+    let stateMetadataStorage = TestStateMetadataStorage(
       state: makeState(
         activation: activation,
         status: .active,
@@ -214,12 +280,12 @@ final class LicenseManagerRestoreTests: XCTestCase {
     let manager = LicenseManager(
       provider: provider,
       activationStorage: activationStorage,
-      stateSnapshotStorage: stateSnapshotStorage
+      stateMetadataStorage: stateMetadataStorage
     )
 
     XCTAssertEqual(manager.status, .expired)
     XCTAssertNil(manager.activation)
     XCTAssertNil(activationStorage.activation)
-    XCTAssertNil(stateSnapshotStorage.snapshot)
+    XCTAssertNil(stateMetadataStorage.metadata)
   }
 }

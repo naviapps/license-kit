@@ -1,12 +1,11 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
   name: "LicenseKit",
-  defaultLocalization: "en",
   platforms: [
     .iOS(.v15),
-    .macOS(.v12),
+    .macOS(.v14),
     .tvOS(.v15),
     .watchOS(.v8),
     .visionOS(.v1),
@@ -19,14 +18,11 @@ let package = Package(
   ],
   targets: [
     .target(
-      name: "LicenseKit",
-      path: "Sources/LicenseKit"
+      name: "LicenseKit"
     ),
     .testTarget(
       name: "LicenseKitTests",
-      dependencies: ["LicenseKit"],
-      path: "Tests/LicenseKitTests"
+      dependencies: ["LicenseKit"]
     ),
-  ],
-  swiftLanguageVersions: [.v5]
+  ]
 )

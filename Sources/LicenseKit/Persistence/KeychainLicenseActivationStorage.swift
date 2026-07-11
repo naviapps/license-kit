@@ -45,7 +45,7 @@ public final class KeychainLicenseActivationStorage: @unchecked Sendable,
     do {
       data = try JSONEncoder().encode(activation)
     } catch {
-      throw LicenseError.storageFailure(error)
+      throw LicenseError.storageFailure(normalizing: error)
     }
 
     var query = baseQuery()
@@ -88,7 +88,7 @@ public final class KeychainLicenseActivationStorage: @unchecked Sendable,
     do {
       return try JSONDecoder().decode(LicenseActivation.self, from: data)
     } catch {
-      throw LicenseError.storageFailure(error)
+      throw LicenseError.storageFailure(normalizing: error)
     }
   }
 

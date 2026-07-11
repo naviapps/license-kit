@@ -29,41 +29,48 @@ final class TestActivationStorage: LicenseActivationStorage, @unchecked Sendable
   }
 }
 
-final class TestStateSnapshotStorage: LicenseStateSnapshotStorage, @unchecked Sendable {
-  var snapshot: LicenseStateSnapshot?
+final class TestStateMetadataStorage: LicenseStateMetadataStorage, @unchecked Sendable {
+  var metadataData: Data?
   var saveError: Error?
   var loadError: Error?
   var deleteError: Error?
 
+  var metadata: LicenseStateMetadata? {
+    guard let metadataData else { return nil }
+    return try? JSONDecoder().decode(LicenseStateMetadata.self, from: metadataData)
+  }
+
   init(state: LicenseState? = nil) {
-    snapshot = state.flatMap(LicenseStateSnapshot.init(state:))
+    if let metadata = state.flatMap(LicenseStateMetadata.init(state:)) {
+      metadataData = try? JSONEncoder().encode(metadata)
+    }
   }
 
-  func save(_ snapshot: LicenseStateSnapshot) throws {
+  func save(_ metadataData: Data) throws {
     if let saveError { throw saveError }
-    self.snapshot = snapshot
+    self.metadataData = metadataData
   }
 
-  func load() throws -> LicenseStateSnapshot? {
+  func load() throws -> Data? {
     if let loadError { throw loadError }
-    return snapshot
+    return metadataData
   }
 
   func delete() throws {
     if let deleteError { throw deleteError }
-    snapshot = nil
+    metadataData = nil
   }
 
   func state(matching activation: LicenseActivation) throws -> LicenseState? {
-    guard let snapshot else { return nil }
-    guard snapshot.matches(activation: activation) else { return nil }
-    return snapshot.restoreState(activation: activation)
+    guard let metadata else { return nil }
+    guard metadata.matches(activation: activation) else { return nil }
+    return metadata.restoreState(activation: activation)
   }
 }
 
 final class TestProvider: LicenseProvider, @unchecked Sendable {
   let activation: LicenseActivation
-  var validationResult = LicenseValidationResult(
+  var validationResult = makeValidationResult(
     isValid: true,
     expiresAt: nil
   )
@@ -72,6 +79,7 @@ final class TestProvider: LicenseProvider, @unchecked Sendable {
   var deactivationError: Error?
   var activationDelayNanoseconds: UInt64?
   var validationDelayNanoseconds: UInt64?
+  var deactivationDelayNanoseconds: UInt64?
   private(set) var activationCount = 0
   private(set) var deactivationCount = 0
   private(set) var validationCount = 0
@@ -103,6 +111,9 @@ final class TestProvider: LicenseProvider, @unchecked Sendable {
   func deactivate(_ activation: LicenseActivation) async throws {
     deactivationCount += 1
     lastDeactivatedActivation = activation
+    if let deactivationDelayNanoseconds {
+      try await Task.sleep(nanoseconds: deactivationDelayNanoseconds)
+    }
     if let deactivationError { throw deactivationError }
   }
 
@@ -129,22 +140,46 @@ struct TestUnexpectedError: Error, CustomStringConvertible {
   }
 }
 
+func makeSource(_ identifier: String) -> LicenseSource {
+  LicenseSource(identifier: identifier)!
+}
+
 func makeActivation(
-  source: LicenseSource = .default,
+  source: LicenseSource = .unspecified,
   licenseKey: String? = "KEY",
-  planID: String = "pro",
-  activationID: String? = "instance",
+  planIdentifier: String = "pro",
+  activationIdentifier: String? = "instance",
   activatedAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
   expiresAt: Date? = nil
 ) -> LicenseActivation {
   LicenseActivation(
     source: source,
-    licenseKey: licenseKey,
-    planID: planID,
-    activationID: activationID,
+    planIdentifier: planIdentifier,
     activatedAt: activatedAt,
+    licenseKey: licenseKey,
+    activationIdentifier: activationIdentifier,
     expiresAt: expiresAt
-  )
+  )!
+}
+
+func makePlan(
+  identifier: String = "pro",
+  isLicensed: Bool = true,
+  expiresAt: Date? = nil
+) -> LicensePlan {
+  LicensePlan(identifier: identifier, isLicensed: isLicensed, expiresAt: expiresAt)!
+}
+
+func makeValidationResult(
+  isValid: Bool = true,
+  planIdentifier: String? = nil,
+  expiresAt: Date? = nil
+) -> LicenseValidationResult {
+  LicenseValidationResult(
+    isValid: isValid,
+    planIdentifier: planIdentifier,
+    expiresAt: expiresAt
+  )!
 }
 
 func makeState(
